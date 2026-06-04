@@ -1,202 +1,164 @@
 import {
-  WebSocketGateway,
-  WebSocketServer,
-  SubscribeMessage,
-  OnGatewayConnection,
-  OnGatewayDisconnect,
-  MessageBody,
-  ConnectedSocket,
+  WebSocketGateway, WebSocketServer, SubscribeMessage,
+  OnGatewayConnection, OnGatewayDisconnect, MessageBody, ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { randomUUID } from 'crypto';
-import {
-  ChatMessage,
-  SendChatPayload,
-  UserListMessage,
-} from '../chat/chat.types';
+import { ChatMessage, SendChatPayload, UserListMessage } from '../chat/chat.types';
 import { AuthService } from '../auth/auth.service';
+import { UserService } from '../auth/user.service';
 
 // ── In-memory state ──────────────────────────────────────────────────────────
-const clients = new Map<string, { username: string; socketId: string }>();
-const history: ChatMessage[] = [];
+interface ClientInfo { username: string; socketId: string; userId: number; currentRoom: number; }
+const clients = new Map<string, ClientInfo>();
+
+// Per-room history
+const roomHistory = new Map<number, ChatMessage[]>();
 const MAX_HISTORY = 50;
 
-// ── Rate-limit state (per socket) ────────────────────────────────────────────
-const MSG_WINDOW_MS  = 5_000;  // 5-second sliding window
-const MSG_MAX        = 10;     // max messages per window
+const MSG_WINDOW_MS = 5_000;
+const MSG_MAX = 10;
+const rateLimits = new Map<string, { timestamps: number[] }>();
 
-interface RateEntry {
-  timestamps: number[];
-}
-const rateLimits = new Map<string, RateEntry>();
-
-@WebSocketGateway({
-  cors: {
-    origin: 'http://localhost:3000',
-    credentials: true,
-  },
-})
+@WebSocketGateway({ cors: { origin: 'http://localhost:3000', credentials: true } })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer()
-  server: Server;
+  @WebSocketServer() server: Server;
 
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly users: UserService,
+  ) {}
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  private getUserList(): string[] {
-    return [...clients.values()].map((c) => c.username);
+  private getHistory(roomId: number): ChatMessage[] {
+    if (!roomHistory.has(roomId)) roomHistory.set(roomId, []);
+    return roomHistory.get(roomId)!;
   }
 
-  private saveToHistory(msg: ChatMessage): void {
-    history.push(msg);
-    if (history.length > MAX_HISTORY) history.shift();
+  private saveToHistory(roomId: number, msg: ChatMessage): void {
+    const hist = this.getHistory(roomId);
+    hist.push(msg);
+    if (hist.length > MAX_HISTORY) hist.shift();
   }
 
-  private broadcastUserList(): void {
-    const payload: UserListMessage = { type: 'user_list', users: this.getUserList() };
-    this.server.emit('user_list', payload);
+  private getRoomSocketIds(roomId: number): string[] {
+    return [...clients.values()].filter(c => c.currentRoom === roomId).map(c => c.socketId);
   }
 
-  /**
-   * Extract and verify the JWT from the handshake.
-   *
-   * The client sends the token in the Authorization header:
-   *   Authorization: Bearer <token>
-   * as part of the socket.io extraHeaders option.
-   *
-   * Falls back to checking handshake.auth.token for clients that
-   * cannot set custom headers (e.g. browser WS without socket.io).
-   */
-  private verifyHandshake(socket: Socket): string | null {
+  private broadcastToRoom(roomId: number, event: string, data: any): void {
+    const ids = this.getRoomSocketIds(roomId);
+    for (const id of ids) this.server.to(id).emit(event, data);
+  }
+
+  private broadcastUserListToRoom(roomId: number): void {
+    const users = [...clients.values()].filter(c => c.currentRoom === roomId).map(c => c.username);
+    const payload: UserListMessage = { type: 'user_list', users };
+    this.broadcastToRoom(roomId, 'user_list', payload);
+  }
+
+  private verifyHandshake(socket: Socket): { username: string; userId: number } | null {
     try {
-      // Prefer Authorization header (more conventional)
       const header = socket.handshake.headers['authorization'] ?? '';
-      const fromHeader = header.startsWith('Bearer ')
-        ? header.slice(7).trim()
-        : '';
-
-      // Fallback: socket.io auth object  { auth: { token: '...' } }
+      const fromHeader = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
       const fromAuth = (socket.handshake.auth as { token?: string }).token ?? '';
-
       const raw = fromHeader || fromAuth;
       if (!raw) return null;
-
       const payload = this.auth.verify(raw);
-      return payload.username ?? null;
-    } catch {
-      return null;
-    }
+      const user = this.users.findByUsername(payload.username);
+      if (!user) return null;
+      return { username: payload.username, userId: user.id };
+    } catch { return null; }
   }
 
-  /**
-   * Simple sliding-window rate limiter.
-   * Returns true if the message should be allowed.
-   */
   private checkRateLimit(socketId: string): boolean {
     const now = Date.now();
     const entry = rateLimits.get(socketId) ?? { timestamps: [] };
-
-    // Drop timestamps outside the window
-    entry.timestamps = entry.timestamps.filter((t) => now - t < MSG_WINDOW_MS);
-
-    if (entry.timestamps.length >= MSG_MAX) {
-      rateLimits.set(socketId, entry);
-      return false;
-    }
-
+    entry.timestamps = entry.timestamps.filter(t => now - t < MSG_WINDOW_MS);
+    if (entry.timestamps.length >= MSG_MAX) { rateLimits.set(socketId, entry); return false; }
     entry.timestamps.push(now);
     rateLimits.set(socketId, entry);
     return true;
   }
 
-  // ── Connection ─────────────────────────────────────────────────────────────
-
   handleConnection(socket: Socket): void {
-    const username = this.verifyHandshake(socket);
-
-    if (!username) {
-      // Reject unauthenticated or expired-token connections immediately
-      socket.emit('auth_error', {
-        message: 'Missing or invalid auth token. Connect via POST /auth/token first.',
-      });
+    const identity = this.verifyHandshake(socket);
+    if (!identity) {
+      socket.emit('auth_error', { message: 'Missing or invalid auth token.' });
       socket.disconnect(true);
-      console.warn(`[!] Rejected unauthenticated connection from ${socket.id}`);
       return;
     }
 
-    // Check for duplicate username (optional — remove if you allow multi-tab)
-    const duplicate = [...clients.values()].find((c) => c.username === username);
+    const { username, userId } = identity;
+    const duplicate = [...clients.values()].find(c => c.username === username);
     if (duplicate) {
       socket.emit('auth_error', { message: 'Username already connected.' });
       socket.disconnect(true);
-      console.warn(`[!] Duplicate username "${username}" rejected`);
       return;
     }
 
-    clients.set(socket.id, { username, socketId: socket.id });
-    console.log(`[+] ${username} connected  (total: ${clients.size})`);
+    // Get user's approved rooms; default to general
+    const userRooms = this.users.getUserRooms(userId);
+    const generalRoom = this.users.findRoomByName('general');
+    const defaultRoom = userRooms[0] ?? generalRoom;
+    if (!defaultRoom) {
+      socket.emit('auth_error', { message: 'No accessible room found.' });
+      socket.disconnect(true);
+      return;
+    }
 
-    socket.emit('history',   { type: 'history',   messages: history });
-    socket.emit('user_list', { type: 'user_list', users: this.getUserList() });
+    clients.set(socket.id, { username, socketId: socket.id, userId, currentRoom: defaultRoom.id });
 
-    socket.broadcast.emit('user_joined', {
-      type: 'user_joined',
-      username,
-      timestamp: Date.now(),
-    });
-
-    this.broadcastUserList();
+    // Send rooms list
+    socket.emit('rooms_list', { rooms: userRooms });
+    // Send history of current room
+    socket.emit('history', { type: 'history', messages: this.getHistory(defaultRoom.id), roomId: defaultRoom.id });
+    socket.emit('room_changed', { roomId: defaultRoom.id, roomName: defaultRoom.name });
+    socket.broadcast.emit('user_joined', { type: 'user_joined', username, timestamp: Date.now() });
+    this.broadcastUserListToRoom(defaultRoom.id);
+    console.log(`[+] ${username} connected to #${defaultRoom.name}`);
   }
-
-  // ── Disconnection ──────────────────────────────────────────────────────────
 
   handleDisconnect(socket: Socket): void {
     const client = clients.get(socket.id);
     rateLimits.delete(socket.id);
     if (!client) return;
-
+    const roomId = client.currentRoom;
     clients.delete(socket.id);
-    console.log(`[-] ${client.username} disconnected  (total: ${clients.size})`);
-
-    this.server.emit('user_left', {
-      type: 'user_left',
-      username: client.username,
-      timestamp: Date.now(),
-    });
-
-    this.broadcastUserList();
+    this.server.emit('user_left', { type: 'user_left', username: client.username, timestamp: Date.now() });
+    this.broadcastUserListToRoom(roomId);
+    console.log(`[-] ${client.username} disconnected`);
   }
 
-  // ── Incoming: chat message ─────────────────────────────────────────────────
-
   @SubscribeMessage('chat')
-  handleChat(
-    @ConnectedSocket() socket: Socket,
-    @MessageBody() payload: SendChatPayload,
-  ): void {
+  handleChat(@ConnectedSocket() socket: Socket, @MessageBody() payload: SendChatPayload): void {
     const client = clients.get(socket.id);
     if (!client) return;
-
-    // Rate-limit check
-    if (!this.checkRateLimit(socket.id)) {
-      socket.emit('error_msg', { message: 'Rate limit exceeded. Slow down.' });
-      return;
-    }
-
+    if (!this.checkRateLimit(socket.id)) { socket.emit('error_msg', { message: 'Rate limit exceeded.' }); return; }
     const text = (payload.text ?? '').trim().slice(0, 500);
     if (!text) return;
+    const msg: ChatMessage = { type: 'chat', id: randomUUID(), username: client.username, text, timestamp: Date.now() };
+    this.saveToHistory(client.currentRoom, msg);
+    this.broadcastToRoom(client.currentRoom, 'chat', msg);
+  }
 
-    const msg: ChatMessage = {
-      type: 'chat',
-      id: randomUUID(),
-      username: client.username,   // always use server-side identity
-      text,
-      timestamp: Date.now(),
-    };
+  @SubscribeMessage('switch_room')
+  async handleSwitchRoom(@ConnectedSocket() socket: Socket, @MessageBody() payload: { roomId: number }): Promise<void> {
+    const client = clients.get(socket.id);
+    if (!client) return;
+    const room = this.users.findRoomById(payload.roomId);
+    if (!room) { socket.emit('error_msg', { message: 'Room not found.' }); return; }
 
-    this.saveToHistory(msg);
-    this.server.emit('chat', msg);
-    console.log(`[msg] ${client.username}: ${text}`);
+    // Check membership
+    const member = this.users.getRoomMember(room.id, client.userId);
+    if (!member || member.status !== 'approved') {
+      socket.emit('error_msg', { message: 'You are not a member of this room.' }); return;
+    }
+
+    const oldRoomId = client.currentRoom;
+    client.currentRoom = room.id;
+
+    this.broadcastUserListToRoom(oldRoomId);
+    socket.emit('history', { type: 'history', messages: this.getHistory(room.id), roomId: room.id });
+    socket.emit('room_changed', { roomId: room.id, roomName: room.name });
+    this.broadcastUserListToRoom(room.id);
   }
 }
