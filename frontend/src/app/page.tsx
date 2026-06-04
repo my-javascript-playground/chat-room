@@ -7,20 +7,38 @@ import MessageList from '@/components/MessageList';
 import MessageInput from '@/components/MessageInput';
 import { useChat }  from '@/hooks/useChat';
 
-export default function ChatPage() {
-  const [username, setUsername] = useState<string | null>(null);
+type AuthMode = 'login' | 'register';
 
-  const { messages, users, status, sendMessage } = useChat({
-    username: username ?? '',
-    enabled: !!username,
+interface Credentials {
+  username: string;
+  password: string;
+  mode:     AuthMode;
+}
+
+export default function ChatPage() {
+  const [creds, setCreds] = useState<Credentials | null>(null);
+
+  const { messages, users, status, authError, sendMessage } = useChat({
+    username: creds?.username ?? '',
+    password: creds?.password ?? '',
+    mode:     creds?.mode     ?? 'login',
+    enabled:  !!creds,
   });
 
-  // ── Login screen ────────────────────────────────────────────────────────
-  if (!username) {
-    return <LoginScreen onJoin={setUsername} />;
+  // If auth failed after submitting, show login again with the error
+  const showLogin = !creds || (status === 'error' && !!authError);
+
+  if (showLogin) {
+    return (
+      <LoginScreen
+        initialError={authError ?? undefined}
+        onJoin={(username, password, mode) => {
+          setCreds({ username, password, mode });
+        }}
+      />
+    );
   }
 
-  // ── Chat UI ─────────────────────────────────────────────────────────────
   return (
     <div
       style={{
@@ -30,10 +48,8 @@ export default function ChatPage() {
         overflow: 'hidden',
       }}
     >
-      {/* Sidebar */}
-      <Sidebar status={status} users={users} currentUser={username} />
+      <Sidebar status={status} users={users} currentUser={creds.username} />
 
-      {/* Main */}
       <main
         style={{
           flex: 1,
@@ -42,7 +58,6 @@ export default function ChatPage() {
           minWidth: 0,
         }}
       >
-        {/* Header */}
         <div
           style={{
             padding: '1rem 1.5rem',
@@ -67,10 +82,7 @@ export default function ChatPage() {
           <span>{users.length} online</span>
         </div>
 
-        {/* Messages */}
-        <MessageList messages={messages} currentUser={username} />
-
-        {/* Input */}
+        <MessageList messages={messages} currentUser={creds.username} />
         <MessageInput status={status} onSend={sendMessage} />
       </main>
     </div>

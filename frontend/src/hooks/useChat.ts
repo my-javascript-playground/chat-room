@@ -7,46 +7,61 @@ import { MessageItem, ChatMessage, ConnectionStatus } from '@/types/chat';
 const SERVER_URL  = 'http://localhost:8080';
 const MAX_HISTORY = 200;
 
+type AuthMode = 'login' | 'register';
+
 interface UseChatOptions {
   username: string;
-  enabled: boolean;
+  password: string;
+  mode:     AuthMode;
+  enabled:  boolean;
 }
 
 interface UseChatReturn {
-  messages: MessageItem[];
-  users:    string[];
-  status:   ConnectionStatus;
+  messages:    MessageItem[];
+  users:       string[];
+  status:      ConnectionStatus;
+  authError:   string | null;
   sendMessage: (text: string) => void;
 }
 
 /**
- * Fetch a short-lived JWT from the backend for the given username.
- * Throws on network or server errors so callers can surface them.
+ * Obtain a JWT from the backend.
+ * Uses POST /auth/register (first time) or POST /auth/token (login).
  */
-async function fetchToken(username: string): Promise<string> {
-  const res = await fetch(`${SERVER_URL}/auth/token`, {
+async function fetchToken(
+  username: string,
+  password: string,
+  mode: AuthMode,
+): Promise<string> {
+  const endpoint = mode === 'register' ? '/auth/register' : '/auth/token';
+  const res = await fetch(`${SERVER_URL}${endpoint}`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ username }),
-    // Never cache auth requests
-    cache: 'no-store',
+    body:    JSON.stringify({ username, password }),
+    cache:   'no-store',
   });
 
+  const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body?.message ?? `Token request failed: ${res.status}`);
+    throw new Error(body?.message ?? `Auth failed: ${res.status}`);
   }
 
-  const { token } = await res.json();
+  const { token } = body;
   if (typeof token !== 'string' || !token) throw new Error('Server returned empty token');
   return token;
 }
 
-export function useChat({ username, enabled }: UseChatOptions): UseChatReturn {
-  const [messages, setMessages] = useState<MessageItem[]>([]);
-  const [users,    setUsers]    = useState<string[]>([]);
-  const [status,   setStatus]   = useState<ConnectionStatus>('connecting');
-  const socketRef               = useRef<Socket | null>(null);
+export function useChat({
+  username,
+  password,
+  mode,
+  enabled,
+}: UseChatOptions): UseChatReturn {
+  const [messages,  setMessages]  = useState<MessageItem[]>([]);
+  const [users,     setUsers]     = useState<string[]>([]);
+  const [status,    setStatus]    = useState<ConnectionStatus>('connecting');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const socketRef                 = useRef<Socket | null>(null);
 
   const pushMessage = useCallback((item: MessageItem) => {
     setMessages((prev) => {
@@ -68,38 +83,27 @@ export function useChat({ username, enabled }: UseChatOptions): UseChatReturn {
   );
 
   useEffect(() => {
-    if (!enabled || !username) return;
+    if (!enabled || !username || !password) return;
 
-    let cancelled = false; // guard against React double-invoke in dev
+    let cancelled = false;
 
     async function connect() {
       setStatus('connecting');
+      setAuthError(null);
 
       let token: string;
       try {
-        token = await fetchToken(username);
-      } catch (err) {
+        token = await fetchToken(username, password, mode);
+      } catch (err: any) {
         if (cancelled) return;
         console.error('[auth] Failed to obtain token:', err);
+        setAuthError(err.message ?? 'Authentication failed');
         setStatus('error');
         return;
       }
 
       if (cancelled) return;
 
-      /**
-       * Pass the JWT in TWO places so it works regardless of transport:
-       *
-       * 1. socket.io `auth` object  → available as socket.handshake.auth.token
-       *    on the server. Works for both WebSocket and polling transports.
-       *
-       * 2. `extraHeaders` (Authorization: Bearer …) → available as
-       *    socket.handshake.headers.authorization on the server.
-       *    NOTE: socket.io-client ignores extraHeaders in browser
-       *    XMLHttpRequest polling, but they ARE sent for the WebSocket
-       *    upgrade request. Since we force `transports: ['websocket']`
-       *    both channels are effectively covered.
-       */
       const socket: Socket = io(SERVER_URL, {
         auth:             { token },
         extraHeaders:     { Authorization: `Bearer ${token}` },
@@ -111,19 +115,17 @@ export function useChat({ username, enabled }: UseChatOptions): UseChatReturn {
 
       socketRef.current = socket;
 
-      // ── lifecycle ──────────────────────────────────────────────────────
-      socket.on('connect', () => setStatus('connected'));
-      socket.on('disconnect', () => setStatus('disconnected'));
+      socket.on('connect',       () => setStatus('connected'));
+      socket.on('disconnect',    () => setStatus('disconnected'));
       socket.on('connect_error', () => setStatus('error'));
 
-      // Server-side auth rejection
       socket.on('auth_error', (data: { message: string }) => {
         console.error('[ws] auth_error:', data.message);
+        setAuthError(data.message);
         setStatus('error');
         socket.disconnect();
       });
 
-      // ── server → client ────────────────────────────────────────────────
       socket.on('history', (data: { messages: ChatMessage[] }) => {
         setMessages(data.messages.map((m) => ({ ...m, kind: 'chat' as const })));
       });
@@ -156,7 +158,7 @@ export function useChat({ username, enabled }: UseChatOptions): UseChatReturn {
       socketRef.current?.disconnect();
       socketRef.current = null;
     };
-  }, [enabled, username, pushMessage, pushSystem]);
+  }, [enabled, username, password, mode, pushMessage, pushSystem]);
 
   const sendMessage = useCallback((text: string) => {
     const trimmed = text.trim();
@@ -164,5 +166,5 @@ export function useChat({ username, enabled }: UseChatOptions): UseChatReturn {
     socketRef.current.emit('chat', { text: trimmed });
   }, []);
 
-  return { messages, users, status, sendMessage };
+  return { messages, users, status, authError, sendMessage };
 }

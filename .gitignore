@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# NestJS
+dist/
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+
+# Coverage
+coverage/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Windows ADS artifacts
+*:Zone.Identifier

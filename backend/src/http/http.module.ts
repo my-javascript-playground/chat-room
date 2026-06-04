@@ -3,7 +3,7 @@ import { TokenController } from './token.controller';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [AuthModule],
+  imports:     [AuthModule],
   controllers: [TokenController],
 })
 export class HttpModule {}
