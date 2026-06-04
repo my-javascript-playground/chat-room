@@ -7,46 +7,43 @@ import { randomUUID } from 'crypto';
 import { ChatMessage, SendChatPayload, UserListMessage } from '../chat/chat.types';
 import { AuthService } from '../auth/auth.service';
 import { UserService } from '../auth/user.service';
+import { ChatService } from '../chat/chat.service';
 
-// ── In-memory state ──────────────────────────────────────────────────────────
+// ── In-memory state (connection tracking only — messages now in SQLite) ───────
 interface ClientInfo { username: string; socketId: string; userId: number; currentRoom: number; }
-const clients = new Map<string, ClientInfo>();
-
-// Per-room history
-const roomHistory = new Map<number, ChatMessage[]>();
-const MAX_HISTORY = 50;
+const clients    = new Map<string, ClientInfo>();
 
 const MSG_WINDOW_MS = 5_000;
-const MSG_MAX = 10;
-const rateLimits = new Map<string, { timestamps: number[] }>();
+const MSG_MAX       = 10;
+const rateLimits    = new Map<string, { timestamps: number[] }>();
 
 @WebSocketGateway({ cors: { origin: 'http://localhost:3000', credentials: true } })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
 
   constructor(
-    private readonly auth: AuthService,
-    private readonly users: UserService,
+    private readonly auth:    AuthService,
+    private readonly users:   UserService,
+    private readonly chatSvc: ChatService,
   ) {}
 
-  private getHistory(roomId: number): ChatMessage[] {
-    if (!roomHistory.has(roomId)) roomHistory.set(roomId, []);
-    return roomHistory.get(roomId)!;
+  // ── Public: push updated rooms list to a specific connected user ───────────
+
+  /** Push a fresh rooms_list to every socket whose userId is in `userIds`. */
+  notifyUsersRoomsUpdated(userIds?: number[]): void {
+    for (const [, c] of clients) {
+      if (userIds && !userIds.includes(c.userId)) continue;
+      const userRooms = this.users.getUserRooms(c.userId);
+      this.server.to(c.socketId).emit('rooms_list', { rooms: userRooms });
+    }
   }
 
-  private saveToHistory(roomId: number, msg: ChatMessage): void {
-    const hist = this.getHistory(roomId);
-    hist.push(msg);
-    if (hist.length > MAX_HISTORY) hist.shift();
-  }
-
-  private getRoomSocketIds(roomId: number): string[] {
-    return [...clients.values()].filter(c => c.currentRoom === roomId).map(c => c.socketId);
-  }
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   private broadcastToRoom(roomId: number, event: string, data: any): void {
-    const ids = this.getRoomSocketIds(roomId);
-    for (const id of ids) this.server.to(id).emit(event, data);
+    for (const [, c] of clients) {
+      if (c.currentRoom === roomId) this.server.to(c.socketId).emit(event, data);
+    }
   }
 
   private broadcastUserListToRoom(roomId: number): void {
@@ -57,20 +54,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private verifyHandshake(socket: Socket): { username: string; userId: number } | null {
     try {
-      const header = socket.handshake.headers['authorization'] ?? '';
+      const header    = socket.handshake.headers['authorization'] ?? '';
       const fromHeader = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-      const fromAuth = (socket.handshake.auth as { token?: string }).token ?? '';
-      const raw = fromHeader || fromAuth;
+      const fromAuth  = (socket.handshake.auth as { token?: string }).token ?? '';
+      const raw       = fromHeader || fromAuth;
       if (!raw) return null;
       const payload = this.auth.verify(raw);
-      const user = this.users.findByUsername(payload.username);
+      const user    = this.users.findByUsername(payload.username);
       if (!user) return null;
       return { username: payload.username, userId: user.id };
     } catch { return null; }
   }
 
   private checkRateLimit(socketId: string): boolean {
-    const now = Date.now();
+    const now   = Date.now();
     const entry = rateLimits.get(socketId) ?? { timestamps: [] };
     entry.timestamps = entry.timestamps.filter(t => now - t < MSG_WINDOW_MS);
     if (entry.timestamps.length >= MSG_MAX) { rateLimits.set(socketId, entry); return false; }
@@ -78,6 +75,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     rateLimits.set(socketId, entry);
     return true;
   }
+
+  // ── Connection ─────────────────────────────────────────────────────────────
 
   handleConnection(socket: Socket): void {
     const identity = this.verifyHandshake(socket);
@@ -88,17 +87,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     const { username, userId } = identity;
-    const duplicate = [...clients.values()].find(c => c.username === username);
-    if (duplicate) {
+    if ([...clients.values()].find(c => c.username === username)) {
       socket.emit('auth_error', { message: 'Username already connected.' });
       socket.disconnect(true);
       return;
     }
 
-    // Get user's approved rooms; default to general
-    const userRooms = this.users.getUserRooms(userId);
+    const userRooms   = this.users.getUserRooms(userId);
     const generalRoom = this.users.findRoomByName('general');
     const defaultRoom = userRooms[0] ?? generalRoom;
+
     if (!defaultRoom) {
       socket.emit('auth_error', { message: 'No accessible room found.' });
       socket.disconnect(true);
@@ -106,58 +104,83 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     clients.set(socket.id, { username, socketId: socket.id, userId, currentRoom: defaultRoom.id });
+    console.log(`[+] ${username} connected to #${defaultRoom.name}`);
 
-    // Send rooms list
-    socket.emit('rooms_list', { rooms: userRooms });
-    // Send history of current room
-    socket.emit('history', { type: 'history', messages: this.getHistory(defaultRoom.id), roomId: defaultRoom.id });
+    socket.emit('rooms_list',   { rooms: userRooms });
+    socket.emit('history',      { type: 'history', messages: this.chatSvc.getRecentMessages(defaultRoom.id), roomId: defaultRoom.id });
     socket.emit('room_changed', { roomId: defaultRoom.id, roomName: defaultRoom.name });
     socket.broadcast.emit('user_joined', { type: 'user_joined', username, timestamp: Date.now() });
     this.broadcastUserListToRoom(defaultRoom.id);
-    console.log(`[+] ${username} connected to #${defaultRoom.name}`);
   }
+
+  // ── Disconnection ──────────────────────────────────────────────────────────
 
   handleDisconnect(socket: Socket): void {
     const client = clients.get(socket.id);
     rateLimits.delete(socket.id);
     if (!client) return;
-    const roomId = client.currentRoom;
+    const currentRoomId = client.currentRoom;
     clients.delete(socket.id);
-    this.server.emit('user_left', { type: 'user_left', username: client.username, timestamp: Date.now() });
-    this.broadcastUserListToRoom(roomId);
+
+    // Notify every room the user belongs to, not just their current room
+    const userRooms = this.users.getUserRooms(client.userId);
+    const leavePayload = { type: 'user_left', username: client.username, timestamp: Date.now() };
+    for (const room of userRooms) {
+      this.broadcastToRoom(room.id, 'user_left', leavePayload);
+    }
+    // Also cover their current room in case it's not in approved rooms (edge case)
+    this.broadcastToRoom(currentRoomId, 'user_left', leavePayload);
+
+    this.broadcastUserListToRoom(currentRoomId);
     console.log(`[-] ${client.username} disconnected`);
   }
+
+  // ── Incoming: chat message ─────────────────────────────────────────────────
 
   @SubscribeMessage('chat')
   handleChat(@ConnectedSocket() socket: Socket, @MessageBody() payload: SendChatPayload): void {
     const client = clients.get(socket.id);
     if (!client) return;
-    if (!this.checkRateLimit(socket.id)) { socket.emit('error_msg', { message: 'Rate limit exceeded.' }); return; }
+
+    if (!this.checkRateLimit(socket.id)) {
+      socket.emit('error_msg', { message: 'Rate limit exceeded.' });
+      return;
+    }
+
     const text = (payload.text ?? '').trim().slice(0, 500);
     if (!text) return;
-    const msg: ChatMessage = { type: 'chat', id: randomUUID(), username: client.username, text, timestamp: Date.now() };
-    this.saveToHistory(client.currentRoom, msg);
+
+    const msg: ChatMessage = {
+      type: 'chat', id: randomUUID(), username: client.username, text, timestamp: Date.now(),
+    };
+
+    // Fix 4: Persist to SQLite instead of in-memory array
+    this.chatSvc.saveMessage(client.currentRoom, msg);
     this.broadcastToRoom(client.currentRoom, 'chat', msg);
   }
 
+  // ── Incoming: switch room ──────────────────────────────────────────────────
+
   @SubscribeMessage('switch_room')
-  async handleSwitchRoom(@ConnectedSocket() socket: Socket, @MessageBody() payload: { roomId: number }): Promise<void> {
+  handleSwitchRoom(@ConnectedSocket() socket: Socket, @MessageBody() payload: { roomId: number }): void {
     const client = clients.get(socket.id);
     if (!client) return;
-    const room = this.users.findRoomById(payload.roomId);
+
+    const room   = this.users.findRoomById(payload.roomId);
     if (!room) { socket.emit('error_msg', { message: 'Room not found.' }); return; }
 
-    // Check membership
     const member = this.users.getRoomMember(room.id, client.userId);
     if (!member || member.status !== 'approved') {
-      socket.emit('error_msg', { message: 'You are not a member of this room.' }); return;
+      socket.emit('error_msg', { message: 'You are not a member of this room.' });
+      return;
     }
 
     const oldRoomId = client.currentRoom;
     client.currentRoom = room.id;
 
     this.broadcastUserListToRoom(oldRoomId);
-    socket.emit('history', { type: 'history', messages: this.getHistory(room.id), roomId: room.id });
+    // Fix 4: Load persistent history from SQLite for the new room
+    socket.emit('history',      { type: 'history', messages: this.chatSvc.getRecentMessages(room.id), roomId: room.id });
     socket.emit('room_changed', { roomId: room.id, roomName: room.name });
     this.broadcastUserListToRoom(room.id);
   }

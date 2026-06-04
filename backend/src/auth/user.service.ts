@@ -190,10 +190,10 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     ).all(userId) as Room[];
   }
 
-  requestJoinRoom(roomId: number, userId: number): RoomMember {
+  requestJoinRoom(roomId: number, userId: number, initialStatus: JoinStatus = 'pending'): RoomMember {
     const existing = this.getRoomMember(roomId, userId);
     if (existing) throw new Error(existing.status === 'approved' ? 'Already a member' : 'Request already pending');
-    this.db.prepare(`INSERT INTO room_members (roomId, userId, status, createdAt) VALUES (?, ?, 'pending', ?)`).run(roomId, userId, Date.now());
+    this.db.prepare(`INSERT INTO room_members (roomId, userId, status, createdAt) VALUES (?, ?, ?, ?)`).run(roomId, userId, initialStatus, Date.now());
     return this.getRoomMember(roomId, userId)!;
   }
 

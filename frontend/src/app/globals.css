@@ -31,3 +31,7 @@ html, body {
 ::-webkit-scrollbar       { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+/* Hide reCAPTCHA badge globally; show it only on the login screen */
+.grecaptcha-badge { visibility: hidden !important; }
+.show-recaptcha-badge .grecaptcha-badge { visibility: visible !important; }

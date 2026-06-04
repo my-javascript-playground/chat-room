@@ -8,8 +8,9 @@ const SERVER_URL  = 'http://localhost:8080';
 const MAX_HISTORY = 200;
 
 interface UseChatOptions {
-  token:   string;
-  enabled: boolean;
+  token:       string;
+  enabled:     boolean;
+  onAuthError?: () => void;
 }
 
 interface UseChatReturn {
@@ -23,7 +24,7 @@ interface UseChatReturn {
   disconnect:  () => void;
 }
 
-export function useChat({ token, enabled }: UseChatOptions): UseChatReturn {
+export function useChat({ token, enabled, onAuthError }: UseChatOptions): UseChatReturn {
   const [messages,    setMessages]    = useState<MessageItem[]>([]);
   const [users,       setUsers]       = useState<string[]>([]);
   const [status,      setStatus]      = useState<ConnectionStatus>('connecting');
@@ -62,6 +63,8 @@ export function useChat({ token, enabled }: UseChatOptions): UseChatReturn {
     socket.on('auth_error', (data: { message: string }) => {
       setStatus('error');
       socket.disconnect();
+      // Notify parent so it can clear session and redirect to login
+      onAuthError?.();
     });
 
     socket.on('rooms_list', (data: { rooms: Room[] }) => {
@@ -69,11 +72,12 @@ export function useChat({ token, enabled }: UseChatOptions): UseChatReturn {
     });
 
     socket.on('room_changed', (data: { roomId: number; roomName: string }) => {
+      // Don't clear messages here — history event will replace them atomically
       setCurrentRoom(prev => ({ ...(prev ?? { createdBy: 0, createdAt: 0 }), id: data.roomId, name: data.roomName }));
-      setMessages([]);
     });
 
     socket.on('history', (data: { messages: ChatMessage[] }) => {
+      // Replace messages atomically when history arrives (covers both initial load and room switch)
       setMessages(data.messages.map(m => ({ ...m, kind: 'chat' as const })));
     });
 
@@ -101,7 +105,7 @@ export function useChat({ token, enabled }: UseChatOptions): UseChatReturn {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [enabled, token, pushMessage, pushSystem]);
+  }, [enabled, token, onAuthError, pushMessage, pushSystem]);
 
   const sendMessage = useCallback((text: string) => {
     const trimmed = text.trim();

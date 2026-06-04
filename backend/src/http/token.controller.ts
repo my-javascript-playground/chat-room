@@ -8,6 +8,8 @@ import { AuthService }  from '../auth/auth.service';
 import { UserService }  from '../auth/user.service';
 import { AdminGuard }   from '../auth/admin.guard';
 
+import { ChatGateway } from '../gateway/chat.gateway';
+
 interface AuthBody     { username?: string; password?: string; recaptchaToken?: string; }
 interface PasswordBody { password?: string; }
 
@@ -15,18 +17,17 @@ const RECAPTCHA_SECRET = process.env.RECAPTCHA_SECRET_KEY ?? '';
 const RECAPTCHA_ENABLED = !!RECAPTCHA_SECRET;
 
 async function verifyRecaptcha(token: string): Promise<boolean> {
-  if (!RECAPTCHA_ENABLED) return true; // skip in dev if no secret configured
+  if (!RECAPTCHA_ENABLED) return true; // skip when no secret key configured
   if (!token) return false;
   try {
-    const res = await fetch('https://www.google.com/recaptcha/api/siteverify', {
-      method: 'POST',
+    const res  = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+      method:  'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `secret=${encodeURIComponent(RECAPTCHA_SECRET)}&response=${encodeURIComponent(token)}`,
+      body:    `secret=${encodeURIComponent(RECAPTCHA_SECRET)}&response=${encodeURIComponent(token)}`,
     });
-    const data = await res.json() as { success: boolean; score?: number };
-    // For reCAPTCHA v3, require score >= 0.5; for v2 just check success
-    if (typeof data.score === 'number') return data.success && data.score >= 0.5;
-    return data.success;
+    // v2 checkbox returns { success: boolean } — no score field
+    const data = await res.json() as { success: boolean };
+    return data.success === true;
   } catch {
     return false;
   }
@@ -47,8 +48,9 @@ function extractToken(authHeader: string): string {
 @Controller('auth')
 export class TokenController {
   constructor(
-    private readonly auth:  AuthService,
-    private readonly users: UserService,
+    private readonly auth:    AuthService,
+    private readonly users:   UserService,
+    private readonly gateway: ChatGateway,
   ) {}
 
   // ── Public ────────────────────────────────────────────────────────────────
@@ -80,9 +82,6 @@ export class TokenController {
     if (!username) throw new BadRequestException('username is required');
     const password = (body.password ?? '').trim();
     if (!password) throw new BadRequestException('password is required');
-
-    const captchaOk = await verifyRecaptcha(body.recaptchaToken ?? '');
-    if (!captchaOk) throw new BadRequestException('reCAPTCHA verification failed');
 
     const user = await this.users.verify(username, password);
     if (!user) throw new UnauthorizedException('Invalid username or password');
@@ -160,10 +159,18 @@ export class TokenController {
     const room = this.users.findRoomById(roomId);
     if (!room) throw new BadRequestException('Room not found');
 
+    // Admins are approved immediately — no waiting for admin review
+    const isAdmin = user.role === 'admin';
+
     try {
-      await this.users.requestJoinRoom(roomId, user.id);
+      await this.users.requestJoinRoom(roomId, user.id, isAdmin ? 'approved' : 'pending');
     } catch (err: any) {
       throw new ConflictException(err.message);
+    }
+
+    if (isAdmin) {
+      this.gateway.notifyUsersRoomsUpdated([user.id]);
+      return { message: `Joined #${room.name}!` };
     }
     return { message: 'Join request submitted. Waiting for admin approval.' };
   }
@@ -239,6 +246,8 @@ export class TokenController {
 
     try {
       const room = this.users.createRoom(name, admin.id);
+      // Fix 3: Push updated sidebar to all connected users (new room is now joinable)
+      this.gateway.notifyUsersRoomsUpdated();
       return { message: `Room "#${room.name}" created`, room };
     } catch (err: any) {
       throw new ConflictException(err.message);
@@ -252,6 +261,8 @@ export class TokenController {
     try {
       const ok = this.users.deleteRoom(id);
       if (!ok) throw new BadRequestException('Room not found');
+      // Fix 3: Push updated sidebar to all connected users (deleted room removed)
+      this.gateway.notifyUsersRoomsUpdated();
       return { message: 'Room deleted' };
     } catch (err: any) {
       if (err.message === 'Cannot delete the general room') throw new BadRequestException(err.message);
@@ -274,6 +285,8 @@ export class TokenController {
   ): { message: string } {
     const ok = this.users.approveJoinRequest(roomId, userId);
     if (!ok) throw new BadRequestException('Request not found');
+    // Fix 4: Push updated rooms_list only to the approved user's socket
+    this.gateway.notifyUsersRoomsUpdated([userId]);
     return { message: 'Join request approved' };
   }
 
