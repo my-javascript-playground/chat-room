@@ -13,6 +13,7 @@ const MAX_HISTORY = 200;
 
 interface UseChatOptions {
   token:        string;
+  username:     string;
   enabled:      boolean;
   onAuthError?: () => void;
 }
@@ -45,7 +46,7 @@ interface UseChatReturn {
   disconnect:       () => void;
 }
 
-export function useChat({ token, enabled, onAuthError }: UseChatOptions): UseChatReturn {
+export function useChat({ token, username, enabled, onAuthError }: UseChatOptions): UseChatReturn {
   const [messages,        setMessages]        = useState<MessageItem[]>([]);
   const [users,           setUsers]           = useState<UserPresence[]>([]);
   const [status,          setStatus]          = useState<ConnectionStatus>('connecting');
@@ -169,13 +170,9 @@ export function useChat({ token, enabled, onAuthError }: UseChatOptions): UseCha
     // ── DM events ────────────────────────────────────────────────────────────
 
     socket.on('dm_msg', (msg: DmMessage) => {
-      // Determine the partner (the other side of the conversation)
-      const partner = msg.from === activeDmRef.current || msg.to === activeDmRef.current
-        ? activeDmRef.current!
-        : msg.from; // incoming from someone else
-
-      const actualPartner = msg.from === 'self' ? msg.to : msg.from;
-      const key = actualPartner; // key in dmMessages map
+      // Partner = the other person in the conversation (never ourselves).
+      // If we sent it → partner is msg.to. If we received it → partner is msg.from.
+      const key = msg.from === username ? msg.to : msg.from;
 
       setDmMessages(prev => {
         const existing = prev[key] ?? [];

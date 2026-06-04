@@ -63,7 +63,7 @@ export default function ChatPage() {
     clearMention, markRoomRead,
     sendDm, openDm, closeDm,
     disconnect,
-  } = useChat({ token: session?.token ?? '', enabled: !!session, onAuthError: handleAuthError });
+  } = useChat({ token: session?.token ?? '', username: session?.username ?? '', enabled: !!session, onAuthError: handleAuthError });
 
   const fetchAllRooms = useCallback(async () => {
     if (!session) return;
