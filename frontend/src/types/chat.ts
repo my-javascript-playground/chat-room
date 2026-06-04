@@ -1,15 +1,42 @@
+export type PresenceStatus = 'online' | 'away' | 'offline';
+
+export interface UserPresence {
+  username:       string;
+  presenceStatus: PresenceStatus;
+}
+
 export interface ChatMessage {
-  type: 'chat';
-  id: string;
-  username: string;
-  text: string;
+  type:      'chat';
+  id:        string;
+  username:  string;
+  text:      string;
+  timestamp: number;
+  mentions?: string[];
+}
+
+export interface DmMessage {
+  id:        string;
+  from:      string;
+  to:        string;
+  text:      string;
   timestamp: number;
 }
 
+export interface DmConversation {
+  partner:     string;
+  lastMessage: string;
+  lastAt:      number;
+}
+
+export interface MentionNotification extends ChatMessage {
+  roomId:   number;
+  roomName: string;
+}
+
 export interface SystemItem {
-  kind: 'system';
-  id: string;
-  text: string;
+  kind:      'system';
+  id:        string;
+  text:      string;
   timestamp: number;
 }
 

@@ -8,7 +8,8 @@ import { AuthService }  from '../auth/auth.service';
 import { UserService }  from '../auth/user.service';
 import { AdminGuard }   from '../auth/admin.guard';
 
-import { ChatGateway } from '../gateway/chat.gateway';
+import { ChatGateway }  from '../gateway/chat.gateway';
+import { ChatService }  from '../chat/chat.service';
 
 interface AuthBody     { username?: string; password?: string; recaptchaToken?: string; }
 interface PasswordBody { password?: string; }
@@ -51,6 +52,7 @@ export class TokenController {
     private readonly auth:    AuthService,
     private readonly users:   UserService,
     private readonly gateway: ChatGateway,
+    private readonly chatSvc: ChatService,
   ) {}
 
   // ── Public ────────────────────────────────────────────────────────────────
@@ -285,8 +287,10 @@ export class TokenController {
   ): { message: string } {
     const ok = this.users.approveJoinRequest(roomId, userId);
     if (!ok) throw new BadRequestException('Request not found');
-    // Fix 4: Push updated rooms_list only to the approved user's socket
+    // Push updated rooms_list to the newly-approved user
     this.gateway.notifyUsersRoomsUpdated([userId]);
+    // FIX: Notify the room that this user has joined (only fires once, on approval)
+    this.gateway.notifyRoomJoined(roomId, userId);
     return { message: 'Join request approved' };
   }
 
@@ -300,5 +304,18 @@ export class TokenController {
     const ok = this.users.rejectJoinRequest(roomId, userId);
     if (!ok) throw new BadRequestException('Request not found');
     return { message: 'Join request rejected' };
+  }
+
+  // ── DM Conversations (authenticated) ─────────────────────────────────────
+
+  @Get('dm/conversations')
+  @HttpCode(200)
+  getDmConversations(@Headers('authorization') authHeader: string = ''): object[] {
+    const token = extractToken(authHeader);
+    if (!token) throw new UnauthorizedException('Missing token');
+    let payload: { username: string };
+    try { payload = this.auth.verify(token); }
+    catch { throw new UnauthorizedException('Invalid or expired token'); }
+    return this.chatSvc.getDmConversations(payload.username);
   }
 }

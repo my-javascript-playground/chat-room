@@ -1,11 +1,10 @@
-// Shared message types used by both gateway and frontend
-
 export interface ChatMessage {
-  type: 'chat';
-  id: string;
-  username: string;
-  text: string;
+  type:      'chat';
+  id:        string;
+  username:  string;
+  text:      string;
   timestamp: number;
+  mentions?: string[];
 }
 
 export interface SystemMessage {
@@ -15,36 +14,63 @@ export interface SystemMessage {
 }
 
 export interface HistoryMessage {
-  type: 'history';
+  type:     'history';
   messages: ChatMessage[];
 }
 
 export interface UserListMessage {
-  type: 'user_list';
-  users: string[];
+  type:  'user_list';
+  users: UserPresence[];
 }
 
 export interface UserJoinedMessage {
-  type: 'user_joined';
-  username: string;
+  type:      'user_joined';
+  username:  string;
+  roomId:    number;
   timestamp: number;
 }
 
 export interface UserLeftMessage {
-  type: 'user_left';
-  username: string;
+  type:      'user_left';
+  username:  string;
+  roomId:    number;
   timestamp: number;
 }
 
-export type ServerMessage =
-  | ChatMessage
-  | SystemMessage
-  | HistoryMessage
-  | UserListMessage
-  | UserJoinedMessage
-  | UserLeftMessage;
+export interface UserOnlineMessage {
+  type:           'user_online';
+  username:       string;
+  presenceStatus: PresenceStatus;
+  timestamp:      number;
+}
 
-// Payloads sent FROM the client TO the server
+export interface UserExitedRoomMessage {
+  type:      'user_exited_room';
+  username:  string;
+  roomId:    number;
+  timestamp: number;
+}
+
+export type PresenceStatus = 'online' | 'away' | 'offline';
+
+export interface UserPresence {
+  username:       string;
+  presenceStatus: PresenceStatus;
+}
+
+export type ServerMessage =
+  | ChatMessage | SystemMessage | HistoryMessage | UserListMessage
+  | UserJoinedMessage | UserLeftMessage | UserOnlineMessage | UserExitedRoomMessage;
+
 export interface SendChatPayload {
-  text: string;
+  text:      string;
+  mentions?: string[];
+}
+
+export interface SetPresencePayload {
+  status: PresenceStatus;
+}
+
+export interface ExitRoomPayload {
+  roomId: number;
 }

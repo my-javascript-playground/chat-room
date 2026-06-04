@@ -255,4 +255,10 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     const result = this.db.prepare('UPDATE users SET passwordHash = ? WHERE id = ?').run(hash, id);
     return result.changes > 0;
   }
+
+  /** Forcefully remove an approved or pending member from a room. */
+  removeRoomMember(roomId: number, userId: number): boolean {
+    const result = this.db.prepare('DELETE FROM room_members WHERE roomId = ? AND userId = ?').run(roomId, userId);
+    return result.changes > 0;
+  }
 }
