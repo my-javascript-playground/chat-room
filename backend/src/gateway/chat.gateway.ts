@@ -28,6 +28,13 @@ const MSG_WINDOW_MS = 5_000;
 const MSG_MAX       = 10;
 const rateLimits    = new Map<string, { timestamps: number[] }>();
 
+// Grace-period timers for offline broadcast.
+// When a socket disconnects we wait OFFLINE_GRACE_MS before declaring the user
+// offline.  If they reconnect within the window (e.g. page refresh) we cancel
+// the timer and never broadcast offline at all.
+const OFFLINE_GRACE_MS = 3_000;
+const offlineTimers    = new Map<number, ReturnType<typeof setTimeout>>(); // userId → timer
+
 @WebSocketGateway({ cors: { origin: process.env.FRONTEND_URL ?? 'http://localhost:3000', credentials: true } })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
@@ -145,6 +152,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  /**
+   * Build a deduplicated map of username → presenceStatus for every connected socket.
+   * Used to seed the reconnecting client's globalPresence so DM dots are immediately correct.
+   */
+  private _buildPresenceSnapshot(): { username: string; presenceStatus: PresenceStatus }[] {
+    const seen = new Map<string, PresenceStatus>();
+    for (const [, c] of clients) {
+      if (!seen.has(c.username)) {
+        seen.set(c.username, c.presenceStatus);
+      }
+    }
+    return Array.from(seen.entries()).map(([username, presenceStatus]) => ({ username, presenceStatus }));
+  }
+
   private _verifyHandshake(socket: Socket): { username: string; userId: number } | null {
     try {
       const header     = socket.handshake.headers['authorization'] ?? '';
@@ -202,12 +223,32 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     console.log(`[+] ${username} connected (${socket.id})`);
 
+    // Check if this is a reconnect within the grace window (e.g. page refresh).
+    // If so: cancel the pending offline timer AND skip re-broadcasting online —
+    // other users never saw offline, so announcing online again is redundant noise.
+    const pendingOffline = offlineTimers.get(userId);
+    const isReconnect    = !!pendingOffline;
+    if (pendingOffline) {
+      clearTimeout(pendingOffline);
+      offlineTimers.delete(userId);
+      console.log(`[~] ${username} reconnected within grace period — online/offline suppressed`);
+    }
+
     socket.emit('rooms_list',   { rooms: userRooms });
     socket.emit('history',      { type: 'history', messages: this.chatSvc.getRecentMessages(defaultRoom.id), roomId: defaultRoom.id });
     socket.emit('room_changed', { roomId: defaultRoom.id, roomName: defaultRoom.name });
 
-    // FIX 1: Broadcast presence to ALL shared rooms, not just the current one.
-    this._broadcastPresenceToSharedRooms(userId, username, 'online');
+    // Send a full presence snapshot so the reconnecting client can seed globalPresence
+    // for ALL online users, not just those in the current room. Without this, users
+    // in other rooms would show as offline in the DM list after a page refresh.
+    const snapshot = this._buildPresenceSnapshot();
+    socket.emit('presence_snapshot', { users: snapshot });
+
+    // Only broadcast online on a fresh first connection, not on a silent reconnect.
+    if (!isReconnect) {
+      this._broadcastPresenceToSharedRooms(userId, username, 'online');
+    }
+    // Always refresh the user_list for the default room so the dot appears.
     this._broadcastUserListToAllMemberRooms(userId);
   }
 
@@ -221,13 +262,28 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     clients.delete(socket.id);
     console.log(`[-] ${client.username} disconnected (${socket.id})`);
 
-    // Only broadcast offline if this was their LAST socket
+    this._broadcastUserListToRoom(client.currentRoom);
+
+    // Only broadcast offline if this was their LAST socket.
+    // We use a short grace period so that a page refresh (disconnect → reconnect
+    // within ~1-2 s) does not flash an offline/online notification to other users.
     const hasOtherSockets = [...clients.values()].some(c => c.userId === client.userId);
     if (!hasOtherSockets) {
-      this._broadcastPresenceToSharedRooms(client.userId, client.username, 'offline');
-      this._broadcastUserListToAllMemberRooms(client.userId);
-    } else {
-      this._broadcastUserListToRoom(client.currentRoom);
+      // Cancel any existing timer for this user (shouldn't normally exist, but be safe)
+      const existing = offlineTimers.get(client.userId);
+      if (existing) clearTimeout(existing);
+
+      const { userId, username } = client;
+      const timer = setTimeout(() => {
+        offlineTimers.delete(userId);
+        // Double-check they haven't reconnected during the grace period
+        const reconnected = [...clients.values()].some(c => c.userId === userId);
+        if (!reconnected) {
+          this._broadcastPresenceToSharedRooms(userId, username, 'offline');
+          this._broadcastUserListToAllMemberRooms(userId);
+        }
+      }, OFFLINE_GRACE_MS);
+      offlineTimers.set(userId, timer);
     }
   }
 
@@ -271,10 +327,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.users.removeRoomMember(payload.roomId, client.userId);
     }
 
-    // Notify others in that room
+    // Notify remaining members of the left room
     this._broadcastToRoomMembers(payload.roomId, 'user_exited_room', {
       type: 'user_exited_room', username: client.username, roomId: payload.roomId, timestamp: Date.now(),
     });
+
+    // Notify every socket currently VIEWING the left room to remove this user
+    // from their In Room list. We use a dedicated event so it does NOT touch
+    // globalPresence — the user's actual presence status (for DMs etc.) is unchanged.
+    for (const [, c] of clients) {
+      if (c.currentRoom === payload.roomId) {
+        this.server.to(c.socketId).emit('user_removed_from_room', {
+          username: client.username, roomId: payload.roomId,
+        });
+      }
+    }
 
     // Move this user's current room if they were viewing the exited one
     if (client.currentRoom === payload.roomId) {

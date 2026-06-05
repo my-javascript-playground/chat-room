@@ -140,6 +140,19 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
     socket.on('disconnect',    () => setStatus('disconnected'));
     socket.on('connect_error', () => setStatus('error'));
 
+    // Seed globalPresence with ALL currently-online users on (re)connect.
+    // This is a full replace (not merge) so stale entries from the previous
+    // session are cleared. Without this, users in other rooms show as offline
+    // in the DM list after a page refresh because user_list only covers the
+    // current room.
+    socket.on('presence_snapshot', (data: { users: { username: string; presenceStatus: PresenceStatus }[] }) => {
+      setGlobalPresence(() => {
+        const next = new Map<string, PresenceStatus>();
+        data.users.forEach(u => next.set(u.username, u.presenceStatus));
+        return next;
+      });
+    });
+
     socket.on('auth_error', () => {
       setStatus('error');
       socket.disconnect();
@@ -220,6 +233,12 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
 
     socket.on('mention', (data: MentionNotification) => {
       setMentions(prev => [...prev, data]);
+    });
+
+    // Fired when a user leaves a room — remove them from the In Room list only.
+    // Intentionally does NOT update globalPresence so DM partner dots are unaffected.
+    socket.on('user_removed_from_room', (data: { username: string; roomId: number }) => {
+      setUsers(prev => prev.filter(u => u.username !== data.username));
     });
 
     socket.on('room_exited', (data: { roomId: number }) => {
