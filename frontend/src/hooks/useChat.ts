@@ -12,6 +12,25 @@ import { SERVER_URL } from '@/lib/env';
 
 const MAX_HISTORY = 200;
 
+// ── Persistent DM dismissal ─────────────────────────────────────────────────
+// Stored in localStorage as a Set of partner usernames, keyed per user so
+// logging in as a different account doesn't bleed state.
+function dismissedKey(username: string) { return `chatroom_dm_dismissed:${username}`; }
+
+function loadDismissed(username: string): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(dismissedKey(username));
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch { return new Set(); }
+}
+
+function saveDismissed(username: string, set: Set<string>) {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(dismissedKey(username), JSON.stringify([...set]));
+}
+
 interface UseChatOptions {
   token:        string;
   username:     string;
@@ -40,11 +59,12 @@ interface UseChatReturn {
   setPresence:      (status: PresenceStatus) => void;
   clearMention:     (id: string) => void;
   markRoomRead:     (roomId: number) => void;
-  sendDm:           (to: string, text: string) => void;
-  openDm:           (partner: string) => void;
-  closeDm:          () => void;
-  markDmRead:       (partner: string) => void;
-  disconnect:       () => void;
+  sendDm:               (to: string, text: string) => void;
+  openDm:               (partner: string) => void;
+  closeDm:              () => void;
+  closeDmConversation:  (partner: string) => void;
+  markDmRead:           (partner: string) => void;
+  disconnect:           () => void;
 }
 
 export function useChat({ token, username, enabled, onAuthError }: UseChatOptions): UseChatReturn {
@@ -64,6 +84,8 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
   const socketRef      = useRef<Socket | null>(null);
   const currentRoomRef = useRef<number | null>(null);
   const activeDmRef    = useRef<string | null>(null);
+  // Keep a mutable ref to dismissed set so socket callbacks always see latest value
+  const dismissedRef   = useRef<Set<string>>(new Set());
 
   useEffect(() => { currentRoomRef.current = currentRoom?.id ?? null; }, [currentRoom]);
   useEffect(() => { activeDmRef.current = activeDm; }, [activeDm]);
@@ -82,6 +104,10 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
   useEffect(() => {
     if (!enabled || !token) return;
 
+    // Load persisted dismissals for this user on mount
+    const dismissed = loadDismissed(username);
+    dismissedRef.current = dismissed;
+
     const socket: Socket = io(SERVER_URL, {
       auth:                 { token },
       extraHeaders:         { Authorization: `Bearer ${token}` },
@@ -92,7 +118,23 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
     });
     socketRef.current = socket;
 
-    socket.on('connect',       () => setStatus('connected'));
+    socket.on('connect', () => {
+      setStatus('connected');
+      fetch(`${SERVER_URL}/auth/dm/conversations`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(r => r.ok ? r.json() : [])
+        .then((convos: { partner: string; lastMessage: string; lastAt: number }[]) => {
+          if (!convos.length) return;
+          // Filter out any partners the user has dismissed
+          const visible = convos.filter(c => !dismissedRef.current.has(c.partner));
+          setDmConversations(visible);
+          visible.forEach(c => {
+            socket.emit('dm_history', { with: c.partner });
+          });
+        })
+        .catch(() => {});
+    });
     socket.on('disconnect',    () => setStatus('disconnected'));
     socket.on('connect_error', () => setStatus('error'));
 
@@ -117,12 +159,10 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
       setMessages(data.messages.map(m => ({ ...m, kind: 'chat' as const })));
     });
 
-    // Message for the currently visible room
     socket.on('chat', (msg: ChatMessage) => {
       pushMessage({ ...msg, kind: 'chat' });
     });
 
-    // FIX 5: Background room message → increment unread badge
     socket.on('room_msg', (data: { roomId: number; msg: ChatMessage }) => {
       setUnreadCounts(prev => ({
         ...prev,
@@ -142,7 +182,6 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
       }
     });
 
-    // FIX 1: Presence arrives for every shared room — show in current room chat
     socket.on('user_online', (data: { username: string; presenceStatus: PresenceStatus }) => {
       const label = data.presenceStatus === 'online' ? 'is now online'
                   : data.presenceStatus === 'away'   ? 'is now away'
@@ -158,7 +197,6 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
       setMentions(prev => [...prev, data]);
     });
 
-    // FIX 4: room_exited → remove room from list (server has removed the membership)
     socket.on('room_exited', (data: { roomId: number }) => {
       setRooms(prev => prev.filter(r => r.id !== data.roomId));
       setUnreadCounts(prev => { const n = { ...prev }; delete n[data.roomId]; return n; });
@@ -168,21 +206,24 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
       pushSystem(`⚠ ${data.message}`);
     });
 
-    // ── DM events ────────────────────────────────────────────────────────────
+    // ── DM events ─────────────────────────────────────────────────────────────
 
     socket.on('dm_msg', (msg: DmMessage) => {
-      // Partner = the other person in the conversation (never ourselves).
-      // If we sent it → partner is msg.to. If we received it → partner is msg.from.
       const key = msg.from === username ? msg.to : msg.from;
 
       setDmMessages(prev => {
         const existing = prev[key] ?? [];
-        // Avoid duplicates
         if (existing.some(m => m.id === msg.id)) return prev;
         return { ...prev, [key]: [...existing, msg] };
       });
 
-      // Update conversations list
+      // If this partner was dismissed, receiving a new message un-dismisses them
+      // (remove from the dismissed set and persist the change).
+      if (dismissedRef.current.has(key)) {
+        dismissedRef.current.delete(key);
+        saveDismissed(username, dismissedRef.current);
+      }
+
       setDmConversations(prev => {
         const existing = prev.find(c => c.partner === key);
         const updated: DmConversation = { partner: key, lastMessage: msg.text, lastAt: msg.timestamp };
@@ -190,7 +231,6 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
         return [updated, ...prev];
       });
 
-      // Increment unread if this DM isn't currently open
       if (activeDmRef.current !== key) {
         setDmUnread(prev => ({ ...prev, [key]: (prev[key] ?? 0) + 1 }));
       }
@@ -204,7 +244,7 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [enabled, token, onAuthError, pushMessage, pushSystem]);
+  }, [enabled, token, username, onAuthError, pushMessage, pushSystem]);
 
   const sendMessage = useCallback((text: string) => {
     const trimmed = text.trim();
@@ -218,7 +258,6 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
     socketRef.current.emit('switch_room', { roomId });
   }, []);
 
-  // FIX 4: exitRoom now just emits — server removes membership & we get rooms_list back
   const exitRoom = useCallback((roomId: number) => {
     if (!socketRef.current?.connected) return;
     socketRef.current.emit('exit_room', { roomId });
@@ -246,11 +285,22 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
   const openDm = useCallback((partner: string) => {
     setActiveDm(partner);
     setDmUnread(prev => { const n = { ...prev }; delete n[partner]; return n; });
-    // Request history if not yet loaded
     socketRef.current?.emit('dm_history', { with: partner });
   }, []);
 
   const closeDm = useCallback(() => setActiveDm(null), []);
+
+  // Remove DM from sidebar AND persist the dismissal so it survives logout/login.
+  // The dismissal is cleared automatically when a new message arrives from that partner.
+  const closeDmConversation = useCallback((partner: string) => {
+    setDmConversations(prev => prev.filter(c => c.partner !== partner));
+    setDmMessages(prev => { const n = { ...prev }; delete n[partner]; return n; });
+    setDmUnread(prev => { const n = { ...prev }; delete n[partner]; return n; });
+    setActiveDm(prev => prev === partner ? null : prev);
+    // Persist dismissal
+    dismissedRef.current.add(partner);
+    saveDismissed(username, dismissedRef.current);
+  }, [username]);
 
   const markDmRead = useCallback((partner: string) => {
     setDmUnread(prev => { const n = { ...prev }; delete n[partner]; return n; });
@@ -267,7 +317,7 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
     dmMessages, dmConversations, dmUnread, activeDm,
     sendMessage, switchRoom, exitRoom, setPresence,
     clearMention, markRoomRead,
-    sendDm, openDm, closeDm, markDmRead,
+    sendDm, openDm, closeDm, closeDmConversation, markDmRead,
     disconnect,
   };
 }

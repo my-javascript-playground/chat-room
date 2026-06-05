@@ -40,10 +40,28 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
   const captchaContainerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef         = useRef<number | null>(null);
   const scriptLoadedRef     = useRef(false);
+  const scriptReadyRef      = useRef(false); // true once grecaptcha is available
 
   // ── Render the v2 widget into the container div ───────────────────────────
+  // IMPORTANT: We must clear the container's innerHTML before re-rendering
+  // because reCAPTCHA embeds an iframe into the div. Simply setting
+  // widgetIdRef.current = null does NOT remove the iframe, so the next
+  // grecaptcha.render() call throws "already rendered in this element".
   const renderWidget = useCallback(() => {
-    if (!captchaContainerRef.current || !window.grecaptcha || widgetIdRef.current !== null) return;
+    if (!captchaContainerRef.current || !window.grecaptcha) return;
+
+    // If a widget already exists (DOM has the iframe), reset it instead of
+    // rendering a new one — this avoids the double-render error entirely.
+    if (widgetIdRef.current !== null) {
+      window.grecaptcha.reset(widgetIdRef.current);
+      setCaptchaToken('');
+      return;
+    }
+
+    // Clear any leftover DOM from a previous render cycle (e.g. after
+    // React unmount/remount or strict-mode double-invoke).
+    captchaContainerRef.current.innerHTML = '';
+
     widgetIdRef.current = window.grecaptcha.render(captchaContainerRef.current, {
       sitekey:  RECAPTCHA_SITE_KEY,
       theme:    'dark',
@@ -58,7 +76,10 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
     if (!RECAPTCHA_ACTIVE || scriptLoadedRef.current) return;
     scriptLoadedRef.current = true;
 
-    window.onRecaptchaLoad = () => renderWidget();
+    window.onRecaptchaLoad = () => {
+      scriptReadyRef.current = true;
+      renderWidget();
+    };
 
     if (!document.querySelector('script[src*="recaptcha/api.js"]')) {
       const script    = document.createElement('script');
@@ -66,18 +87,22 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
       script.async    = true;
       script.defer    = true;
       document.head.appendChild(script);
-    } else {
-      if (window.grecaptcha) renderWidget();
+    } else if (window.grecaptcha) {
+      scriptReadyRef.current = true;
+      renderWidget();
     }
   }, [renderWidget]);
 
   // ── Re-render widget whenever the mode changes (login ↔ register) ─────────
+  // We do NOT null out widgetIdRef here — instead renderWidget() detects an
+  // existing widget and calls .reset() on it, preventing the double-render error.
   useEffect(() => {
     if (!RECAPTCHA_ACTIVE) return;
     setCaptchaToken('');
-    widgetIdRef.current = null;
-    const t = setTimeout(() => renderWidget(), 50);
-    return () => clearTimeout(t);
+    if (scriptReadyRef.current) {
+      const t = setTimeout(() => renderWidget(), 50);
+      return () => clearTimeout(t);
+    }
   }, [mode, renderWidget]);
 
   // ── Validation ────────────────────────────────────────────────────────────

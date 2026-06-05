@@ -35,3 +35,25 @@ html, body {
 /* Hide reCAPTCHA badge globally; show it only on the login screen */
 .grecaptcha-badge { visibility: hidden !important; }
 .show-recaptcha-badge .grecaptcha-badge { visibility: visible !important; }
+
+/* ── Mobile responsive ───────────────────────────────────────────────────── */
+
+/* Desktop: sidebar visible inline, mobile drawer hidden */
+.sidebar-desktop { display: flex; height: 100%; }
+.mobile-only     { display: none !important; }
+
+@media (max-width: 640px) {
+  /* Hide the inline sidebar on mobile — it renders as a drawer instead */
+  .sidebar-desktop { display: none !important; }
+  .mobile-only     { display: flex !important; }
+}
+
+/* ── DM Panel ────────────────────────────────────────────────────────────── */
+/* Desktop: show floating panel, hide full-screen overlay */
+.dm-panel-desktop { display: flex !important; flex-direction: column; }
+.dm-panel-mobile  { display: none  !important; }
+
+@media (max-width: 640px) {
+  .dm-panel-desktop { display: none  !important; }
+  .dm-panel-mobile  { display: flex  !important; flex-direction: column; }
+}

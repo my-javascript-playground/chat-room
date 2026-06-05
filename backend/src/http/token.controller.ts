@@ -175,6 +175,7 @@ export class TokenController {
 
     if (isAdmin) {
       this.gateway.notifyUsersRoomsUpdated([user.id]);
+      this.gateway.notifyRoomJoined(roomId, user.id);
       return { message: `Joined #${room.name}!` };
     }
     return { message: 'Join request submitted. Waiting for admin approval.' };

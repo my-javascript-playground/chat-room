@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import LoginScreen, { LoginResult }  from '@/components/LoginScreen';
-import Sidebar                        from '@/components/Sidebar';
+import Sidebar, { MobileMenuButton } from '@/components/Sidebar';
 import MessageList                    from '@/components/MessageList';
 import MessageInput                   from '@/components/MessageInput';
 import AdminPanel                     from '@/components/AdminPanel';
@@ -40,13 +40,13 @@ function clearSession() {
 }
 
 export default function ChatPage() {
-  const [mounted,      setMounted]      = useState(false);
-  const [session,      setSession]      = useState<Session | null>(null);
-  const [modal,        setModal]        = useState<Modal>('none');
-  const [allRooms,     setAllRooms]     = useState<Room[]>([]);
-  const [showJoinMenu, setShowJoinMenu] = useState(false);
+  const [mounted,        setMounted]        = useState(false);
+  const [session,        setSession]        = useState<Session | null>(null);
+  const [modal,          setModal]          = useState<Modal>('none');
+  const [allRooms,       setAllRooms]       = useState<Room[]>([]);
+  const [showJoinMenu,   setShowJoinMenu]   = useState(false);
+  const [mobileSidebar,  setMobileSidebar]  = useState(false);
 
-  // Refs for click-outside — must be declared before any early returns
   const joinMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -55,7 +55,6 @@ export default function ChatPage() {
     setMounted(true);
   }, []);
 
-  // Click-outside: Join Room dropdown
   useEffect(() => {
     if (!showJoinMenu) return;
     function handler(e: MouseEvent) {
@@ -77,7 +76,7 @@ export default function ChatPage() {
     dmMessages, dmConversations, dmUnread, activeDm,
     sendMessage, switchRoom, exitRoom, setPresence,
     clearMention, markRoomRead,
-    sendDm, openDm, closeDm,
+    sendDm, openDm, closeDm, closeDmConversation,
     disconnect,
   } = useChat({ token: session?.token ?? '', username: session?.username ?? '', enabled: !!session, onAuthError: handleAuthError });
 
@@ -108,8 +107,10 @@ export default function ChatPage() {
 
   function handleLogout() { disconnect(); clearSession(); setSession(null); setModal('none'); }
 
-  const memberRoomIds = new Set(rooms.map(r => r.id));
-  const joinableRooms = allRooms.filter(r => !memberRoomIds.has(r.id) && r.name.toLowerCase() !== 'general');
+  const memberRoomIds  = new Set(rooms.map(r => r.id));
+  const joinableRooms  = allRooms.filter(r => !memberRoomIds.has(r.id) && r.name.toLowerCase() !== 'general');
+  const totalUnread    = Object.values(unreadCounts).reduce((a, b) => a + b, 0)
+                       + Object.values(dmUnread).reduce((a, b) => a + b, 0);
 
   return (
     <>
@@ -131,29 +132,64 @@ export default function ChatPage() {
           onSetPresence={setPresence}
           token={session.token}
           onOpenDm={openDm}
+          onCloseDmConversation={closeDmConversation}
           dmConversations={dmConversations}
           dmUnread={dmUnread}
           activeDm={activeDm}
+          mobileOpen={mobileSidebar}
+          onMobileClose={() => setMobileSidebar(false)}
         />
 
         <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* Header */}
-          <div style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-dim)' }}>
-            <strong style={{ fontFamily: 'var(--display)', fontSize: '1rem', color: 'var(--text)', fontWeight: 700 }}>
-              {currentRoom ? `# ${currentRoom.name}` : '# …'}
-            </strong>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <span>{users.length} in room</span>
+          <div style={{
+            padding: '0.75rem 1rem',
+            borderBottom: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '0.75rem',
+            fontSize: '0.8rem', color: 'var(--text-dim)',
+          }}>
+            {/* Left: hamburger (mobile) + room name */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0 }}>
+              <div className="mobile-only">
+                <MobileMenuButton
+                  onClick={() => setMobileSidebar(true)}
+                  unreadTotal={totalUnread}
+                />
+              </div>
+              <strong style={{
+                fontFamily: 'var(--display)', fontSize: '1rem',
+                color: 'var(--text)', fontWeight: 700,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {currentRoom ? `# ${currentRoom.name}` : '# …'}
+              </strong>
+            </div>
+
+            {/* Right: user count + join room */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+              <span style={{ display: 'none' }} className="desktop-stat">{users.length} in room</span>
               {joinableRooms.length > 0 && (
                 <div ref={joinMenuRef} style={{ position: 'relative' }}>
                   <button
                     onClick={() => setShowJoinMenu(v => !v)}
-                    style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.75rem', cursor: 'pointer', background: showJoinMenu ? 'var(--surface)' : 'transparent', color: 'var(--text-dim)', fontFamily: 'var(--display)' }}
+                    style={{
+                      padding: '0.25rem 0.6rem', border: '1px solid var(--border)',
+                      borderRadius: 6, fontSize: '0.75rem', cursor: 'pointer',
+                      background: showJoinMenu ? 'var(--surface)' : 'transparent',
+                      color: 'var(--text-dim)', fontFamily: 'var(--display)',
+                      whiteSpace: 'nowrap',
+                    }}
                   >
                     + Join room
                   </button>
                   {showJoinMenu && (
-                    <div style={{ position: 'absolute', right: 0, top: '110%', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, minWidth: 180, padding: '0.5rem' }}>
+                    <div style={{
+                      position: 'absolute', right: 0, top: '110%',
+                      background: 'var(--surface)', border: '1px solid var(--border)',
+                      borderRadius: 6, zIndex: 50, minWidth: 180, padding: '0.5rem',
+                    }}>
                       {joinableRooms.map(r => (
                         <button
                           key={r.id}
@@ -164,7 +200,12 @@ export default function ChatPage() {
                             alert(body?.message ?? (res.ok ? 'Request sent!' : 'Error'));
                             fetchAllRooms();
                           }}
-                          style={{ display: 'block', width: '100%', padding: '0.4rem 0.6rem', background: 'none', border: 'none', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left', borderRadius: 4 }}
+                          style={{
+                            display: 'block', width: '100%', padding: '0.4rem 0.6rem',
+                            background: 'none', border: 'none', color: 'var(--text)',
+                            fontFamily: 'var(--mono)', fontSize: '0.8rem',
+                            cursor: 'pointer', textAlign: 'left', borderRadius: 4,
+                          }}
                         >
                           # {r.name}
                         </button>
@@ -181,7 +222,7 @@ export default function ChatPage() {
         </main>
       </div>
 
-      {/* DM panel */}
+      {/* DM panel — full screen on mobile, floating on desktop */}
       {activeDm && (
         <DirectMessagePanel
           partner={activeDm}
@@ -194,9 +235,17 @@ export default function ChatPage() {
 
       {/* Mention toasts */}
       {mentions.length > 0 && (
-        <div style={{ position: 'fixed', bottom: '1.5rem', right: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', zIndex: 200, maxWidth: 320 }}>
+        <div style={{
+          position: 'fixed', bottom: '1.5rem', right: '1rem',
+          display: 'flex', flexDirection: 'column', gap: '0.5rem',
+          zIndex: 200, maxWidth: 'min(320px, calc(100vw - 2rem))',
+        }}>
           {mentions.map((m: MentionNotification) => (
-            <div key={m.id} style={{ background: 'var(--surface)', border: '1px solid #ff9944', borderRadius: 8, padding: '0.75rem 1rem', boxShadow: '0 4px 20px rgba(0,0,0,0.4)', fontSize: '0.82rem' }}>
+            <div key={m.id} style={{
+              background: 'var(--surface)', border: '1px solid #ff9944',
+              borderRadius: 8, padding: '0.75rem 1rem',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.4)', fontSize: '0.82rem',
+            }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
                 <span style={{ fontWeight: 700, color: '#ff9944' }}>@mention in #{m.roomName}</span>
                 <button onClick={() => clearMention(m.id)} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '0.8rem' }}>✕</button>
@@ -204,7 +253,10 @@ export default function ChatPage() {
               <div style={{ color: 'var(--text-dim)', marginBottom: '0.4rem' }}>
                 <strong style={{ color: 'var(--text)' }}>{m.username}</strong>: {m.text.slice(0, 100)}{m.text.length > 100 ? '…' : ''}
               </div>
-              <button onClick={() => { handleSwitchRoom(m.roomId); clearMention(m.id); }} style={{ fontSize: '0.72rem', padding: '0.2rem 0.6rem', border: '1px solid #ff9944', borderRadius: 4, background: 'none', color: '#ff9944', cursor: 'pointer' }}>
+              <button
+                onClick={() => { handleSwitchRoom(m.roomId); clearMention(m.id); }}
+                style={{ fontSize: '0.72rem', padding: '0.2rem 0.6rem', border: '1px solid #ff9944', borderRadius: 4, background: 'none', color: '#ff9944', cursor: 'pointer' }}
+              >
                 Go to room →
               </button>
             </div>
