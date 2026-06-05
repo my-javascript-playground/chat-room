@@ -1,10 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ConnectionBadge, PresenceDot } from './StatusBadge';
 import { ConnectionStatus, Room, UserPresence, PresenceStatus, DmConversation } from '@/types/chat';
-
-const SERVER_URL = 'http://localhost:8080';
+import { SERVER_URL } from '@/lib/env';
 
 const PRESENCE_OPTIONS: { value: PresenceStatus; label: string }[] = [
   { value: 'online',  label: '🟢 Online'  },
@@ -38,8 +37,21 @@ export default function Sidebar({
   activeDm:         string | null;
 }) {
   const [showPresenceMenu, setShowPresenceMenu] = useState(false);
-  const [showNewDm, setShowNewDm] = useState(false);
-  const [dmTarget, setDmTarget] = useState('');
+  const presenceRef = useRef<HTMLDivElement>(null);
+
+  // ── Click-outside: My Status dropdown ────────────────────────────────────
+  useEffect(() => {
+    if (!showPresenceMenu) return;
+    function handler(e: MouseEvent) {
+      if (presenceRef.current && !presenceRef.current.contains(e.target as Node)) {
+        setShowPresenceMenu(false);
+      }
+    }
+    // Use capture phase so the event is caught before it bubbles up through
+    // any portal or stacking context inside the aside
+    document.addEventListener('mousedown', handler, true);
+    return () => document.removeEventListener('mousedown', handler, true);
+  }, [showPresenceMenu]);
 
   const btnBase: React.CSSProperties = {
     width: '100%', padding: '0.45rem 0.75rem', borderRadius: 6,
@@ -48,8 +60,10 @@ export default function Sidebar({
     fontSize: '0.75rem', letterSpacing: '0.05em', cursor: 'pointer', textAlign: 'left',
   };
 
-  // All online users except self — for DM targets
-  const dmableUsers = users.filter(u => u.username !== currentUser);
+  const dmPartners = new Set(dmConversations.map(c => c.partner));
+  const onlineUsernames = new Set(
+    users.filter(u => u.presenceStatus === 'online').map(u => u.username)
+  );
 
   return (
     <aside style={{
@@ -67,19 +81,40 @@ export default function Sidebar({
         <ConnectionBadge status={status} />
       </div>
 
-      {/* Presence */}
-      <div style={{ position: 'relative' }}>
+      {/* My Status — dropdown */}
+      <div style={{ position: 'relative' }} ref={presenceRef}>
         <SectionLabel>My Status</SectionLabel>
-        <button onClick={() => setShowPresenceMenu(v => !v)} style={{ ...btnBase, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <button
+          onClick={() => setShowPresenceMenu(v => !v)}
+          style={{ ...btnBase, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+        >
           <PresenceDot status={presenceStatus} size={8} />
           {PRESENCE_OPTIONS.find(o => o.value === presenceStatus)?.label.replace(/^\S+\s/, '') ?? presenceStatus}
-          <span style={{ marginLeft: 'auto', opacity: 0.5, fontSize: '0.65rem' }}>▾</span>
+          <span style={{ marginLeft: 'auto', opacity: 0.5, fontSize: '0.65rem' }}>
+            {showPresenceMenu ? '▴' : '▾'}
+          </span>
         </button>
         {showPresenceMenu && (
-          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, overflow: 'hidden', marginTop: 2 }}>
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, right: 0,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 6, zIndex: 100, overflow: 'hidden', marginTop: 2,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+          }}>
             {PRESENCE_OPTIONS.map(opt => (
-              <button key={opt.value} onClick={() => { onSetPresence(opt.value); setShowPresenceMenu(false); }}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', background: presenceStatus === opt.value ? '#00e5a015' : 'transparent', border: 'none', color: presenceStatus === opt.value ? 'var(--accent)' : 'var(--text)', fontFamily: 'var(--display)', fontSize: '0.78rem', cursor: 'pointer', textAlign: 'left' }}>
+              <button
+                key={opt.value}
+                onClick={() => { onSetPresence(opt.value); setShowPresenceMenu(false); }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.5rem',
+                  width: '100%', padding: '0.45rem 0.75rem',
+                  background: presenceStatus === opt.value ? '#00e5a015' : 'transparent',
+                  border: 'none',
+                  color: presenceStatus === opt.value ? 'var(--accent)' : 'var(--text)',
+                  fontFamily: 'var(--display)', fontSize: '0.78rem',
+                  cursor: 'pointer', textAlign: 'left',
+                }}
+              >
                 <PresenceDot status={opt.value} size={7} />
                 {opt.label.replace(/^\S+\s/, '')}
               </button>
@@ -98,7 +133,7 @@ export default function Sidebar({
             const isGeneral = r.name.toLowerCase() === 'general';
 
             return (
-              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                 <button
                   onClick={() => onSwitchRoom(r.id)}
                   style={{
@@ -113,18 +148,42 @@ export default function Sidebar({
                   <span style={{ opacity: 0.5 }}>#</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
                   {unread > 0 && (
-                    <span style={{ background: 'var(--accent)', color: '#000', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 800, padding: '0 5px', minWidth: 16, textAlign: 'center', lineHeight: '16px', height: 16 }}>
+                    <span style={{
+                      background: 'var(--accent)', color: '#000', borderRadius: '999px',
+                      fontSize: '0.6rem', fontWeight: 800, padding: '0 5px',
+                      minWidth: 16, textAlign: 'center', lineHeight: '16px', height: 16,
+                    }}>
                       {unread > 99 ? '99+' : unread}
                     </span>
                   )}
                 </button>
 
-                {/* FIX 3: Only show exit button for non-general rooms */}
+                {/* Leave room — clearly red, always visible */}
                 {!isGeneral && (
                   <button
                     title="Leave room"
                     onClick={() => onExitRoom(r.id)}
-                    style={{ flexShrink: 0, width: 20, height: 20, borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)', cursor: 'pointer', fontSize: '0.65rem', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.55 }}
+                    style={{
+                      flexShrink: 0, width: 24, height: 24, borderRadius: 5,
+                      border: '1px solid #cc333355',
+                      background: '#cc333322',
+                      color: '#ff6666',
+                      cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      lineHeight: 1,
+                    }}
+                    onMouseEnter={e => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.background    = '#cc333355';
+                      el.style.borderColor   = '#ff4444';
+                      el.style.color         = '#ffffff';
+                    }}
+                    onMouseLeave={e => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.background    = '#cc333322';
+                      el.style.borderColor   = '#cc333355';
+                      el.style.color         = '#ff6666';
+                    }}
                   >
                     ✕
                   </button>
@@ -135,54 +194,78 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* Users in room */}
+      {/* In Room — click any other user to open DM */}
       <div>
         <SectionLabel>In Room — {users.length}</SectionLabel>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-          {users.map(u => (
-            <div key={u.username}
-              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.78rem', color: u.username === currentUser ? 'var(--accent)' : 'var(--text-dim)', padding: '0.25rem 0.4rem', borderRadius: 6, cursor: u.username !== currentUser ? 'pointer' : 'default' }}
-              onClick={() => u.username !== currentUser && onOpenDm(u.username)}
-              title={u.username !== currentUser ? `DM @${u.username}` : undefined}
-            >
-              <PresenceDot status={u.presenceStatus} size={7} />
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.username}{u.username === currentUser ? ' (you)' : ''}</span>
-              {u.username !== currentUser && (
-                <span style={{ fontSize: '0.6rem', opacity: 0.4 }}>💬</span>
-              )}
-            </div>
-          ))}
+          {users.map(u => {
+            const isSelf = u.username === currentUser;
+            const canDm  = !isSelf && (u.presenceStatus === 'online' || dmPartners.has(u.username));
+            return (
+              <div
+                key={u.username}
+                onClick={() => canDm && onOpenDm(u.username)}
+                title={canDm ? `DM @${u.username}` : undefined}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.5rem',
+                  fontSize: '0.78rem',
+                  color: isSelf ? 'var(--accent)' : (canDm ? 'var(--text)' : 'var(--text-dim)'),
+                  padding: '0.25rem 0.4rem', borderRadius: 6,
+                  cursor: canDm ? 'pointer' : 'default',
+                  opacity: isSelf ? 1 : (canDm ? 1 : 0.55),
+                }}
+              >
+                <PresenceDot status={u.presenceStatus} size={7} />
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {u.username}{isSelf ? ' (you)' : ''}
+                </span>
+                {canDm && <span style={{ fontSize: '0.6rem', opacity: 0.5 }}>💬</span>}
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* DM conversations */}
+      {/* Direct Messages — only users who are online AND have DM history */}
       {dmConversations.length > 0 && (
         <div>
           <SectionLabel>Direct Messages</SectionLabel>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-            {dmConversations.map(c => {
-              const isActive = activeDm === c.partner;
-              const unread   = dmUnread[c.partner] ?? 0;
-              return (
-                <button key={c.partner} onClick={() => onOpenDm(c.partner)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '0.4rem',
-                    padding: '0.32rem 0.55rem', borderRadius: 6, width: '100%',
-                    border:     isActive ? '1px solid var(--accent)' : '1px solid transparent',
-                    background: isActive ? '#00e5a010' : 'transparent',
-                    color:      isActive ? 'var(--accent)' : 'var(--text-dim)',
-                    fontFamily: 'var(--mono)', fontSize: '0.78rem', cursor: 'pointer', textAlign: 'left',
-                  }}>
-                  <span style={{ opacity: 0.5 }}>@</span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.partner}</span>
-                  {unread > 0 && (
-                    <span style={{ background: '#ff9944', color: '#000', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 800, padding: '0 5px', minWidth: 16, textAlign: 'center', lineHeight: '16px', height: 16 }}>
-                      {unread > 99 ? '99+' : unread}
+            {dmConversations
+              .filter(c => onlineUsernames.has(c.partner))
+              .map(c => {
+                const isActive = activeDm === c.partner;
+                const unread   = dmUnread[c.partner] ?? 0;
+                return (
+                  <button
+                    key={c.partner}
+                    onClick={() => onOpenDm(c.partner)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      padding: '0.32rem 0.55rem', borderRadius: 6, width: '100%',
+                      border:     isActive ? '1px solid var(--accent)' : '1px solid transparent',
+                      background: isActive ? '#00e5a010' : 'transparent',
+                      color:      isActive ? 'var(--accent)' : 'var(--text-dim)',
+                      fontFamily: 'var(--mono)', fontSize: '0.78rem',
+                      cursor: 'pointer', textAlign: 'left',
+                    }}
+                  >
+                    <PresenceDot status="online" size={6} />
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {c.partner}
                     </span>
-                  )}
-                </button>
-              );
-            })}
+                    {unread > 0 && (
+                      <span style={{
+                        background: '#ff9944', color: '#000', borderRadius: '999px',
+                        fontSize: '0.6rem', fontWeight: 800, padding: '0 5px',
+                        minWidth: 16, textAlign: 'center', lineHeight: '16px', height: 16,
+                      }}>
+                        {unread > 99 ? '99+' : unread}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
           </div>
         </div>
       )}
@@ -191,7 +274,7 @@ export default function Sidebar({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: 'auto' }}>
         {isAdmin && <button style={btnBase} onClick={onAdminPanel}>⚙ Admin panel</button>}
         <button style={btnBase} onClick={onChangePassword}>🔑 Change password</button>
-        <button style={{ ...btnBase, color: '#e55', borderColor: '#e554' }} onClick={onLogout}>⎋ Sign out</button>
+        <button style={{ ...btnBase, color: '#ff6666', borderColor: '#cc333355' }} onClick={onLogout}>⎋ Sign out</button>
       </div>
     </aside>
   );
@@ -199,7 +282,10 @@ export default function Sidebar({
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ fontSize: '0.62rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '0.4rem' }}>
+    <div style={{
+      fontSize: '0.62rem', letterSpacing: '0.14em', textTransform: 'uppercase',
+      color: 'var(--muted)', marginBottom: '0.4rem',
+    }}>
       {children}
     </div>
   );

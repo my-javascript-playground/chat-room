@@ -8,7 +8,8 @@ import {
   DmMessage, DmConversation,
 } from '@/types/chat';
 
-const SERVER_URL  = 'http://localhost:8080';
+import { SERVER_URL } from '@/lib/env';
+
 const MAX_HISTORY = 200;
 
 interface UseChatOptions {

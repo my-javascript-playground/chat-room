@@ -2,7 +2,7 @@
 
 import { useState, KeyboardEvent } from 'react';
 
-const SERVER_URL = 'http://localhost:8080';
+import { SERVER_URL } from '@/lib/env';
 
 export default function ChangePasswordModal({
   token,

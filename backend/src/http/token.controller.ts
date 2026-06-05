@@ -85,6 +85,9 @@ export class TokenController {
     const password = (body.password ?? '').trim();
     if (!password) throw new BadRequestException('password is required');
 
+    const captchaOk = await verifyRecaptcha(body.recaptchaToken ?? '');
+    if (!captchaOk) throw new BadRequestException('reCAPTCHA verification failed');
+
     const user = await this.users.verify(username, password);
     if (!user) throw new UnauthorizedException('Invalid username or password');
     if (user.status === 'pending') throw new ForbiddenException('Your account is pending admin approval');

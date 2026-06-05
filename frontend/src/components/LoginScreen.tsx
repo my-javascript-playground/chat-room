@@ -1,14 +1,11 @@
 'use client';
 
 import { useState, KeyboardEvent, useEffect, useRef, useCallback } from 'react';
-
-const SERVER_URL         = 'http://localhost:8080';
-const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY ?? '';
+import { SERVER_URL, RECAPTCHA_SITE_KEY, RECAPTCHA_ACTIVE } from '@/lib/env';
 
 // reCAPTCHA v2 checkbox — renders the "I'm not a robot" widget with image challenge.
 // Active whenever a site key is configured (including localhost for dev/testing).
 // To bypass entirely in dev, leave NEXT_PUBLIC_RECAPTCHA_SITE_KEY blank.
-const RECAPTCHA_ACTIVE = !!RECAPTCHA_SITE_KEY;
 
 type Mode = 'login' | 'register';
 
@@ -25,7 +22,6 @@ declare global {
       reset:   (widgetId?: number) => void;
       getResponse: (widgetId?: number) => string;
     };
-    // Callback invoked by reCAPTCHA v2 script once it's ready
     onRecaptchaLoad?: () => void;
   }
 }
@@ -39,21 +35,21 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
   const [info,     setInfo]     = useState('');
   const [loading,  setLoading]  = useState(false);
 
-  // reCAPTCHA v2 state — only relevant on register tab
-  const [captchaToken,  setCaptchaToken]  = useState('');   // set by onSuccess callback
+  // reCAPTCHA v2 state — used on both login and register tabs
+  const [captchaToken,      setCaptchaToken]      = useState('');
   const captchaContainerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef         = useRef<number | null>(null);
   const scriptLoadedRef     = useRef(false);
 
-  // ── Render the v2 widget into the container div ──────────────────────────
+  // ── Render the v2 widget into the container div ───────────────────────────
   const renderWidget = useCallback(() => {
     if (!captchaContainerRef.current || !window.grecaptcha || widgetIdRef.current !== null) return;
     widgetIdRef.current = window.grecaptcha.render(captchaContainerRef.current, {
       sitekey:  RECAPTCHA_SITE_KEY,
       theme:    'dark',
-      callback:          (token: string) => setCaptchaToken(token),
-      'expired-callback': ()             => setCaptchaToken(''),
-      'error-callback':   ()             => setCaptchaToken(''),
+      callback:            (token: string) => setCaptchaToken(token),
+      'expired-callback':  ()              => setCaptchaToken(''),
+      'error-callback':    ()              => setCaptchaToken(''),
     });
   }, []);
 
@@ -62,7 +58,6 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
     if (!RECAPTCHA_ACTIVE || scriptLoadedRef.current) return;
     scriptLoadedRef.current = true;
 
-    // onload callback so we know exactly when the API is ready
     window.onRecaptchaLoad = () => renderWidget();
 
     if (!document.querySelector('script[src*="recaptcha/api.js"]')) {
@@ -72,20 +67,17 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
       script.defer    = true;
       document.head.appendChild(script);
     } else {
-      // Script already in DOM (e.g. HMR), grecaptcha may already be ready
       if (window.grecaptcha) renderWidget();
     }
   }, [renderWidget]);
 
-  // ── Re-render widget when switching to register tab ───────────────────────
+  // ── Re-render widget whenever the mode changes (login ↔ register) ─────────
   useEffect(() => {
-    if (mode === 'register' && RECAPTCHA_ACTIVE) {
-      setCaptchaToken('');
-      widgetIdRef.current = null; // allow re-render into freshly mounted div
-      // Small delay to let the div mount before rendering
-      const t = setTimeout(() => renderWidget(), 50);
-      return () => clearTimeout(t);
-    }
+    if (!RECAPTCHA_ACTIVE) return;
+    setCaptchaToken('');
+    widgetIdRef.current = null;
+    const t = setTimeout(() => renderWidget(), 50);
+    return () => clearTimeout(t);
   }, [mode, renderWidget]);
 
   // ── Validation ────────────────────────────────────────────────────────────
@@ -94,9 +86,9 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
     if (!password)           return 'Please enter a password.';
     if (password.length < 6) return 'Password must be at least 6 characters.';
     if (mode === 'register') {
-      if (password !== confirm)                   return 'Passwords do not match.';
-      if (RECAPTCHA_ACTIVE && !captchaToken)      return 'Please complete the reCAPTCHA challenge.';
+      if (password !== confirm)              return 'Passwords do not match.';
     }
+    if (RECAPTCHA_ACTIVE && !captchaToken)   return 'Please complete the reCAPTCHA challenge.';
     return null;
   }
 
@@ -122,7 +114,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
         const res  = await fetch(`${SERVER_URL}/auth/token`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ username: username.trim(), password }),
+          body:    JSON.stringify({ username: username.trim(), password, recaptchaToken: captchaToken }),
           cache:   'no-store',
         });
         const body = await res.json().catch(() => ({}));
@@ -133,7 +125,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
       }
     } catch (e: any) {
       // Reset widget so user can try again
-      if (mode === 'register' && RECAPTCHA_ACTIVE && window.grecaptcha && widgetIdRef.current !== null) {
+      if (RECAPTCHA_ACTIVE && window.grecaptcha && widgetIdRef.current !== null) {
         window.grecaptcha.reset(widgetIdRef.current);
         setCaptchaToken('');
       }
@@ -163,7 +155,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
     color: 'var(--text-dim)', marginBottom: '0.4rem',
   };
 
-  const isSubmitDisabled = loading || (mode === 'register' && RECAPTCHA_ACTIVE && !captchaToken);
+  const isSubmitDisabled = loading || (RECAPTCHA_ACTIVE && !captchaToken);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100dvh', background: 'radial-gradient(ellipse 60% 40% at 50% 60%, #00e5a018 0%, transparent 70%), var(--bg)' }}>
@@ -199,19 +191,17 @@ export default function LoginScreen({ onLogin }: { onLogin: (result: LoginResult
         </div>
 
         {mode === 'register' && (
-          <>
-            <div>
-              <div style={labelStyle}>Confirm Password</div>
-              <input type="password" autoComplete="new-password" value={confirm} placeholder="Re-enter password" disabled={loading} onChange={e => setConfirm(e.target.value)} onKeyDown={handleKey} style={inputStyle(!!error && error.includes('match'))} />
-            </div>
+          <div>
+            <div style={labelStyle}>Confirm Password</div>
+            <input type="password" autoComplete="new-password" value={confirm} placeholder="Re-enter password" disabled={loading} onChange={e => setConfirm(e.target.value)} onKeyDown={handleKey} style={inputStyle(!!error && error.includes('match'))} />
+          </div>
+        )}
 
-            {/* reCAPTCHA v2 checkbox widget — only shown on register tab */}
-            {RECAPTCHA_ACTIVE && (
-              <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <div ref={captchaContainerRef} />
-              </div>
-            )}
-          </>
+        {/* reCAPTCHA v2 checkbox widget — shown on both login and register */}
+        {RECAPTCHA_ACTIVE && (
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <div ref={captchaContainerRef} />
+          </div>
         )}
 
         {error && <div style={{ fontSize: '0.75rem', color: '#e55', marginTop: '-0.5rem' }}>{error}</div>}

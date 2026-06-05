@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import LoginScreen, { LoginResult }  from '@/components/LoginScreen';
 import Sidebar                        from '@/components/Sidebar';
 import MessageList                    from '@/components/MessageList';
@@ -11,7 +11,7 @@ import DirectMessagePanel             from '@/components/DirectMessagePanel';
 import { useChat }                    from '@/hooks/useChat';
 import { Room, MentionNotification }  from '@/types/chat';
 
-const SERVER_URL  = 'http://localhost:8080';
+import { SERVER_URL } from '@/lib/env';
 const SESSION_KEY = 'chatroom_session';
 
 interface Session { token: string; username: string; role: 'user' | 'admin'; }
@@ -40,16 +40,32 @@ function clearSession() {
 }
 
 export default function ChatPage() {
-  const [mounted,  setMounted]  = useState(false);
-  const [session,  setSession]  = useState<Session | null>(null);
-  const [modal,    setModal]    = useState<Modal>('none');
-  const [allRooms, setAllRooms] = useState<Room[]>([]);
+  const [mounted,      setMounted]      = useState(false);
+  const [session,      setSession]      = useState<Session | null>(null);
+  const [modal,        setModal]        = useState<Modal>('none');
+  const [allRooms,     setAllRooms]     = useState<Room[]>([]);
+  const [showJoinMenu, setShowJoinMenu] = useState(false);
+
+  // Refs for click-outside — must be declared before any early returns
+  const joinMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const saved = loadSession();
     if (saved) setSession(saved);
     setMounted(true);
   }, []);
+
+  // Click-outside: Join Room dropdown
+  useEffect(() => {
+    if (!showJoinMenu) return;
+    function handler(e: MouseEvent) {
+      if (joinMenuRef.current && !joinMenuRef.current.contains(e.target as Node)) {
+        setShowJoinMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showJoinMenu]);
 
   const handleAuthError = useCallback(() => {
     clearSession(); setSession(null); setModal('none');
@@ -129,27 +145,33 @@ export default function ChatPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
               <span>{users.length} in room</span>
               {joinableRooms.length > 0 && (
-                <details style={{ position: 'relative', cursor: 'pointer' }}>
-                  <summary style={{ listStyle: 'none', padding: '0.25rem 0.6rem', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.75rem', cursor: 'pointer', userSelect: 'none' }}>
+                <div ref={joinMenuRef} style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => setShowJoinMenu(v => !v)}
+                    style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.75rem', cursor: 'pointer', background: showJoinMenu ? 'var(--surface)' : 'transparent', color: 'var(--text-dim)', fontFamily: 'var(--display)' }}
+                  >
                     + Join room
-                  </summary>
-                  <div style={{ position: 'absolute', right: 0, top: '110%', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, minWidth: 180, padding: '0.5rem' }}>
-                    {joinableRooms.map(r => (
-                      <button
-                        key={r.id}
-                        onClick={async () => {
-                          const res  = await fetch(`${SERVER_URL}/auth/rooms/${r.id}/join`, { method: 'POST', headers: { Authorization: `Bearer ${session.token}` } });
-                          const body = await res.json().catch(() => ({}));
-                          alert(body?.message ?? (res.ok ? 'Request sent!' : 'Error'));
-                          fetchAllRooms();
-                        }}
-                        style={{ display: 'block', width: '100%', padding: '0.4rem 0.6rem', background: 'none', border: 'none', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left', borderRadius: 4 }}
-                      >
-                        # {r.name}
-                      </button>
-                    ))}
-                  </div>
-                </details>
+                  </button>
+                  {showJoinMenu && (
+                    <div style={{ position: 'absolute', right: 0, top: '110%', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, minWidth: 180, padding: '0.5rem' }}>
+                      {joinableRooms.map(r => (
+                        <button
+                          key={r.id}
+                          onClick={async () => {
+                            const res  = await fetch(`${SERVER_URL}/auth/rooms/${r.id}/join`, { method: 'POST', headers: { Authorization: `Bearer ${session.token}` } });
+                            const body = await res.json().catch(() => ({}));
+                            setShowJoinMenu(false);
+                            alert(body?.message ?? (res.ok ? 'Request sent!' : 'Error'));
+                            fetchAllRooms();
+                          }}
+                          style={{ display: 'block', width: '100%', padding: '0.4rem 0.6rem', background: 'none', border: 'none', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left', borderRadius: 4 }}
+                        >
+                          # {r.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

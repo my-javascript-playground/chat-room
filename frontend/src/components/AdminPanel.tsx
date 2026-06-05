@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-const SERVER_URL = 'http://localhost:8080';
+import { SERVER_URL } from '@/lib/env';
 
 interface UserRow  { id: number; username: string; status: 'pending' | 'approved'; role: 'user' | 'admin'; createdAt: number; }
 interface RoomRow  { id: number; name: string; createdBy: number; createdAt: number; }
