@@ -48,7 +48,7 @@ export default function Sidebar({
   status, users, currentUser, isAdmin, onLogout, onAdminPanel, onChangePassword,
   rooms, currentRoom, onSwitchRoom, onExitRoom, unreadCounts,
   presenceStatus, onSetPresence, token, onOpenDm, onCloseDmConversation,
-  dmConversations, dmUnread, activeDm,
+  dmConversations, dmUnread, activeDm, globalPresence,
   mobileOpen, onMobileClose,
 }: {
   status:           ConnectionStatus;
@@ -71,6 +71,7 @@ export default function Sidebar({
   dmConversations:  DmConversation[];
   dmUnread:         Record<string, number>;
   activeDm:         string | null;
+  globalPresence:   Map<string, PresenceStatus>;
   mobileOpen:       boolean;
   onMobileClose:    () => void;
 }) {
@@ -99,10 +100,7 @@ export default function Sidebar({
   };
 
   const dmPartners = new Set(dmConversations.map(c => c.partner));
-  // Build a global presence map from all known users (used for DM status dots)
-  const globalPresence = new Map<string, PresenceStatus>(
-    users.map(u => [u.username, u.presenceStatus])
-  );
+  // globalPresence comes from props — tracks all known users across all rooms
 
   function handleNavAction(fn: () => void) {
     fn();

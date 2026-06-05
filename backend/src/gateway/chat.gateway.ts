@@ -28,7 +28,7 @@ const MSG_WINDOW_MS = 5_000;
 const MSG_MAX       = 10;
 const rateLimits    = new Map<string, { timestamps: number[] }>();
 
-@WebSocketGateway({ cors: { origin: 'http://localhost:3000', credentials: true } })
+@WebSocketGateway({ cors: { origin: process.env.FRONTEND_URL ?? 'http://localhost:3000', credentials: true } })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
 
@@ -96,9 +96,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
    */
   private _broadcastPresenceToSharedRooms(userId: number, username: string, presenceStatus: PresenceStatus): void {
     const userRooms = this.users.getUserRooms(userId);
-    const payload = { type: 'user_online', username, presenceStatus, timestamp: Date.now() };
-    const notified = new Set<string>(); // avoid double-emitting to same socket
+    const timestamp = Date.now();
+    const payload   = { type: 'user_online', username, presenceStatus, timestamp };
 
+    // Collect every approved member across all rooms this user belongs to,
+    // then emit user_online to all their sockets unconditionally.
+    // This ensures:
+    //   (a) the "In Room" presence dot updates even for viewers currently in another room
+    //   (b) globalPresence in the frontend stays accurate for DM partner dots
+    const notifiedSockets = new Set<string>();
     for (const room of userRooms) {
       const memberIds = new Set(
         this.users.getRoomMembers(room.id)
@@ -106,10 +112,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           .map(m => m.userId),
       );
       for (const [, c] of clients) {
-        if (memberIds.has(c.userId) && !notified.has(c.socketId)) {
-          this.server.to(c.socketId).emit('user_online', payload);
-          notified.add(c.socketId);
-        }
+        if (!memberIds.has(c.userId)) continue;
+        if (notifiedSockets.has(c.socketId)) continue;
+        this.server.to(c.socketId).emit('user_online', payload);
+        notifiedSockets.add(c.socketId);
       }
     }
   }
@@ -126,6 +132,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
     const payload: UserListMessage = { type: 'user_list', users };
     this._broadcastToRoomViewers(roomId, 'user_list', payload);
+  }
+
+  /**
+   * After a presence change, re-emit user_list for every room the user belongs to.
+   * Viewers of those rooms will see the updated dot colour immediately.
+   */
+  private _broadcastUserListToAllMemberRooms(userId: number): void {
+    const userRooms = this.users.getUserRooms(userId);
+    for (const room of userRooms) {
+      this._broadcastUserListToRoom(room.id);
+    }
   }
 
   private _verifyHandshake(socket: Socket): { username: string; userId: number } | null {
@@ -191,7 +208,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // FIX 1: Broadcast presence to ALL shared rooms, not just the current one.
     this._broadcastPresenceToSharedRooms(userId, username, 'online');
-    this._broadcastUserListToRoom(defaultRoom.id);
+    this._broadcastUserListToAllMemberRooms(userId);
   }
 
   // ── Disconnection ──────────────────────────────────────────────────────────
@@ -208,9 +225,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const hasOtherSockets = [...clients.values()].some(c => c.userId === client.userId);
     if (!hasOtherSockets) {
       this._broadcastPresenceToSharedRooms(client.userId, client.username, 'offline');
+      this._broadcastUserListToAllMemberRooms(client.userId);
+    } else {
+      this._broadcastUserListToRoom(client.currentRoom);
     }
-
-    this._broadcastUserListToRoom(client.currentRoom);
   }
 
   // ── Set presence ───────────────────────────────────────────────────────────
@@ -226,7 +244,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.presenceStatus = payload.status;
     // FIX 1: Broadcast to ALL shared rooms.
     this._broadcastPresenceToSharedRooms(client.userId, client.username, payload.status);
-    this._broadcastUserListToRoom(client.currentRoom);
+    this._broadcastUserListToAllMemberRooms(client.userId);
   }
 
   // ── Exit room (un-join) ────────────────────────────────────────────────────

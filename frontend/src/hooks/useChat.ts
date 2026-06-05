@@ -52,6 +52,7 @@ interface UseChatReturn {
   dmConversations:  DmConversation[];
   dmUnread:         Record<string, number>;        // partner → unread count
   activeDm:         string | null;                // currently open DM partner
+  globalPresence:   Map<string, PresenceStatus>;   // all known users → presence
   // Actions
   sendMessage:      (text: string) => void;
   switchRoom:       (roomId: number) => void;
@@ -80,6 +81,7 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
   const [dmConversations, setDmConversations] = useState<DmConversation[]>([]);
   const [dmUnread,        setDmUnread]        = useState<Record<string, number>>({});
   const [activeDm,        setActiveDm]        = useState<string | null>(null);
+  const [globalPresence,  setGlobalPresence]  = useState<Map<string, PresenceStatus>>(new Map());
 
   const socketRef      = useRef<Socket | null>(null);
   const currentRoomRef = useRef<number | null>(null);
@@ -187,10 +189,33 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
                   : data.presenceStatus === 'away'   ? 'is now away'
                   : 'went offline';
       pushSystem(`${data.username} ${label}`);
+
+      // Update globalPresence so DM partner dots reflect the new status immediately,
+      // regardless of which room the viewer is currently in.
+      setGlobalPresence(prev => {
+        const next = new Map(prev);
+        next.set(data.username, data.presenceStatus);
+        return next;
+      });
+
+      // Also patch the users array (In Room list) so the presence dot updates
+      // in real-time without waiting for the next user_list event.
+      setUsers(prev =>
+        prev.map(u =>
+          u.username === data.username
+            ? { ...u, presenceStatus: data.presenceStatus }
+            : u
+        )
+      );
     });
 
     socket.on('user_list', (data: { users: UserPresence[] }) => {
       setUsers(data.users);
+      setGlobalPresence(prev => {
+        const next = new Map(prev);
+        data.users.forEach(u => next.set(u.username, u.presenceStatus));
+        return next;
+      });
     });
 
     socket.on('mention', (data: MentionNotification) => {
@@ -314,7 +339,7 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
   return {
     messages, users, status, currentRoom, rooms,
     unreadCounts, mentions, presenceStatus,
-    dmMessages, dmConversations, dmUnread, activeDm,
+    dmMessages, dmConversations, dmUnread, activeDm, globalPresence,
     sendMessage, switchRoom, exitRoom, setPresence,
     clearMention, markRoomRead,
     sendDm, openDm, closeDm, closeDmConversation, markDmRead,

@@ -73,7 +73,7 @@ export default function ChatPage() {
   const {
     messages, users, status, currentRoom, rooms,
     unreadCounts, mentions, presenceStatus,
-    dmMessages, dmConversations, dmUnread, activeDm,
+    dmMessages, dmConversations, dmUnread, activeDm, globalPresence,
     sendMessage, switchRoom, exitRoom, setPresence,
     clearMention, markRoomRead,
     sendDm, openDm, closeDm, closeDmConversation,
@@ -136,6 +136,7 @@ export default function ChatPage() {
           dmConversations={dmConversations}
           dmUnread={dmUnread}
           activeDm={activeDm}
+          globalPresence={globalPresence}
           mobileOpen={mobileSidebar}
           onMobileClose={() => setMobileSidebar(false)}
         />
