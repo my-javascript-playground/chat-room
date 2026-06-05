@@ -1,0 +1,81 @@
+name: Deploy Frontend to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: asia-southeast1
+  SERVICE: chat-room-frontend
+  IMAGE: gcr.io/${{ vars.GCP_PROJECT_ID }}/chat-room-frontend
+
+jobs:
+  deploy:
+    name: Build & Deploy Frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Keyless auth ──────────────────────────────────────────────────────
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── Build & push image ────────────────────────────────────────────────
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker --quiet
+
+      # NEXT_PUBLIC_* vars must be baked in at build time (they're inlined by Next.js).
+      # BACKEND_URL secret = the Cloud Run URL of your backend service.
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag "$IMAGE:${{ github.sha }}" \
+            --tag "$IMAGE:latest" \
+            --file frontend/Dockerfile \
+            --build-arg NEXT_PUBLIC_BACKEND_URL=${{ secrets.BACKEND_URL }} \
+            --build-arg NEXT_PUBLIC_RECAPTCHA_SITE_KEY=${{ secrets.RECAPTCHA_SITE_KEY }} \
+            frontend/
+
+      - name: Push Docker image
+        run: |
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      # ── Deploy to Cloud Run ───────────────────────────────────────────────
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.IMAGE }}:${{ github.sha }}
+          env_vars: |
+            NODE_ENV=production
+            PORT=3000
+          flags: >-
+            --allow-unauthenticated
+            --min-instances=0
+            --max-instances=5
+            --memory=512Mi
+            --cpu=1
+            --port=3000
+            --timeout=60s
+            --concurrency=80
+
+      - name: Print deployed URL
+        run: echo "✅ Frontend → ${{ steps.deploy.outputs.url }}"

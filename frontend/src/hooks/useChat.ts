@@ -12,6 +12,18 @@ import { SERVER_URL } from '@/lib/env';
 
 const MAX_HISTORY = 200;
 
+// crypto.randomUUID() requires a secure context (HTTPS / localhost).
+// This fallback works everywhere including plain-HTTP dev/staging environments.
+function uuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 // ── Persistent DM dismissal ─────────────────────────────────────────────────
 // Stored in localStorage as a Set of partner usernames, keyed per user so
 // logging in as a different account doesn't bleed state.
@@ -100,7 +112,7 @@ export function useChat({ token, username, enabled, onAuthError }: UseChatOption
   }, []);
 
   const pushSystem = useCallback((text: string) => {
-    pushMessage({ kind: 'system', id: crypto.randomUUID(), text, timestamp: Date.now() });
+    pushMessage({ kind: 'system', id: uuid(), text, timestamp: Date.now() });
   }, [pushMessage]);
 
   useEffect(() => {
