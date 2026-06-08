@@ -16,11 +16,12 @@ Cloudflare DNS + Proxy
 ## Step 1 — Enable GCP APIs (run once)
 
 ```bash
-gcloud config set project <project_id>
+export PROJECT_ID=<project_id>
+gcloud config set project $PROJECT_ID
 
 gcloud services enable \
   run.googleapis.com \
-  containerregistry.googleapis.com \
+  artifactregistry.googleapis.com \
   iam.googleapis.com \
   iamcredentials.googleapis.com \
   storage.googleapis.com \
@@ -29,81 +30,100 @@ gcloud services enable \
 
 ---
 
-## Step 2 — Create the SQLite storage bucket
+## Step 2 — Create the Artifact Registry repository (run once)
+
+Images are stored in Artifact Registry (GCR is legacy and no longer recommended).
+
+```bash
+gcloud artifacts repositories create chat-room \
+  --repository-format=docker \
+  --location=asia-southeast1 \
+  --project=$PROJECT_ID
+```
+
+Your image URLs will follow this pattern:
+```
+asia-southeast1-docker.pkg.dev/$PROJECT_ID/chat-room/chat-room-frontend
+asia-southeast1-docker.pkg.dev/$PROJECT_ID/chat-room/chat-room-backend
+```
+
+---
+
+## Step 3 — Create the SQLite storage bucket
 
 Cloud Run is stateless, so the SQLite DB file lives in a GCS bucket mounted
 as a volume at `/mnt/data` inside the backend container.
 
 ```bash
-gcloud storage buckets create gs://<project_id>-chat-db \
-  --project=<project_id> \
+gcloud storage buckets create gs://$PROJECT_ID-chat-db \
+  --project=$PROJECT_ID \
   --location=ASIA-SOUTHEAST1 \
   --uniform-bucket-level-access
 ```
 
 ---
 
-## Step 3 — Store secrets in Secret Manager
+## Step 4 — Store secrets in Secret Manager
 
 ```bash
 # JWT signing secret — use a long random string
 echo -n "your-strong-jwt-secret" | \
   gcloud secrets create chat-room-jwt-secret \
-  --data-file=- --project=<project_id>
+  --data-file=- --project=$PROJECT_ID
 
 # Admin password
 echo -n "your-admin-password" | \
   gcloud secrets create chat-room-admin-password \
-  --data-file=- --project=<project_id>
+  --data-file=- --project=$PROJECT_ID
 
 # reCAPTCHA secret key (leave as empty string if not using)
 echo -n "your-recaptcha-secret" | \
   gcloud secrets create chat-room-recaptcha-secret \
-  --data-file=- --project=<project_id>
+  --data-file=- --project=$PROJECT_ID
 ```
 
 ---
 
-## Step 4 — Set up Workload Identity Federation (keyless — no JSON keys)
+## Step 5 — Set up Workload Identity Federation (keyless — no JSON keys)
 
 ```bash
-PROJECT_NUMBER=$(gcloud projects describe <project_id> --format='value(projectNumber)')
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
 POOL=github-pool
 PROVIDER=github-provider
 SA=github-deployer
 
 # Workload Identity Pool
 gcloud iam workload-identity-pools create $POOL \
-  --project=<project_id> \
+  --project=$PROJECT_ID \
   --location=global \
   --display-name="GitHub Actions Pool"
 
 # OIDC Provider
+# NOTE: --attribute-condition is required — keeps the pool locked to your repo only
 gcloud iam workload-identity-pools providers create-oidc $PROVIDER \
-  --project=<project_id> \
+  --project=$PROJECT_ID \
   --location=global \
   --workload-identity-pool=$POOL \
   --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
   --issuer-uri="https://token.actions.githubusercontent.com" \
   --attribute-condition="assertion.repository == 'my-javascript-playground/chat-room'"
 
-
 # Service Account
 gcloud iam service-accounts create $SA \
-  --project=<project_id> \
+  --project=$PROJECT_ID \
   --display-name="GitHub Deployer"
 
 # Grant roles to the SA
-for ROLE in roles/run.admin roles/storage.admin roles/iam.serviceAccountUser roles/secretmanager.secretAccessor; do
-  gcloud projects add-iam-policy-binding <project_id> \
-    --member="serviceAccount:$SA@<project_id>.iam.gserviceaccount.com" \
+for ROLE in roles/run.admin roles/storage.admin roles/iam.serviceAccountUser roles/secretmanager.secretAccessor roles/artifactregistry.writer; do
+  gcloud projects add-iam-policy-binding neon-cooler-253111 \
+    --member="serviceAccount:$SA@$PROJECT_ID.iam.gserviceaccount.com" \
     --role="$ROLE"
 done
 
 # Allow this GitHub repo to impersonate the SA
 gcloud iam service-accounts add-iam-policy-binding \
-  $SA@<project_id>.iam.gserviceaccount.com \
-  --project=<project_id> \
+  $SA@$PROJECT_ID.iam.gserviceaccount.com \
+  --project=$PROJECT_ID \
   --role="roles/iam.workloadIdentityUser" \
   --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL/attribute.repository/my-javascript-playground/chat-room"
 
@@ -114,26 +134,26 @@ echo "GCP_WORKLOAD_IDENTITY_PROVIDER:"
 echo "projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL/providers/$PROVIDER"
 echo ""
 echo "GCP_SERVICE_ACCOUNT:"
-echo "$SA@<project_id>.iam.gserviceaccount.com"
+echo "$SA@$PROJECT_ID.iam.gserviceaccount.com"
 ```
 
 ---
 
-## Step 5 — GitHub Secrets to add
+## Step 6 — GitHub Secrets to add
 
 Go to: your repo → Settings → Secrets and variables → Actions → New repository secret
 
 | Secret | Value |
 |--------|-------|
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output from Step 4 |
-| `GCP_SERVICE_ACCOUNT` | Output from Step 4 |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output from Step 5 |
+| `GCP_SERVICE_ACCOUNT` | Output from Step 5 |
 | `DOMAIN_NAME` | e.g. `chat.yourdomain.com` |
 | `BACKEND_URL` | Cloud Run backend URL (fill after first backend deploy) |
 | `RECAPTCHA_SITE_KEY` | Your reCAPTCHA v2 site key (or leave empty) |
 
 ---
 
-## Step 6 — Files to add/update in your repo
+## Step 7 — Files to add/update in your repo
 
 ```
 chat-room/
@@ -149,7 +169,7 @@ chat-room/
 
 ---
 
-## Step 7 — First deploy order
+## Step 8 — First deploy order
 
 1. **Commit all files** and push to `main`
 2. Backend workflow runs first — copy the printed Cloud Run URL
@@ -158,7 +178,7 @@ chat-room/
 
 ---
 
-## Step 8 — Custom domain + Cloudflare
+## Step 9 — Custom domain + Cloudflare
 
 ### Backend (api subdomain)
 1. Cloud Run console → `chat-room-backend` → Custom domains → Add mapping
@@ -195,3 +215,12 @@ to Cloud SQL (PostgreSQL) when you need to scale.
 **Scaling to zero**: Both services have `--min-instances=0` so they cost nothing
 when idle. Cold starts are ~2–4s for NestJS. Increase to `--min-instances=1` if
 you need instant response.
+
+**Artifact Registry vs GCR**: The old `gcr.io` hostname (Google Container Registry)
+is legacy. Artifact Registry (`*.pkg.dev`) is the current standard and requires
+the `roles/artifactregistry.writer` role on the service account.
+
+**Multi-line gcloud commands**: When splitting a `gcloud` command across lines
+with `\`, every line except the last must end with ` \` — including the line
+before `--attribute-condition`. Missing a backslash causes the shell to submit
+the command early and treat the next line as a separate command.
