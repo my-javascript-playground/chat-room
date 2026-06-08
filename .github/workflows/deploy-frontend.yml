@@ -36,8 +36,8 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       # ── Build & push image ────────────────────────────────────────────────
-      - name: Configure Docker for GCR
-        run: gcloud auth configure-docker --quiet
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker asia-southeast1-docker.pkg.dev --quiet
 
       # NEXT_PUBLIC_* vars must be baked in at build time (they're inlined by Next.js).
       # BACKEND_URL secret = the Cloud Run URL of your backend service.
