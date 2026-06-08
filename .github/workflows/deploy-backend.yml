@@ -64,7 +64,6 @@ jobs:
           image: ${{ env.IMAGE }}:${{ github.sha }}
           env_vars: |
             NODE_ENV=production
-            PORT=8080
             DB_PATH=/mnt/data/chatroom.db
             FRONTEND_URL=https://${{ secrets.DOMAIN_NAME }}
           # Sensitive values come from GCP Secret Manager
