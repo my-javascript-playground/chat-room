@@ -80,6 +80,7 @@ jobs:
             --port=8080
             --timeout=60s
             --concurrency=80
+            --execution-environment=gen2
             --add-volume=name=sqlite-data,type=cloud-storage,bucket=${{ vars.GCP_PROJECT_ID }}-chat-db
             --add-volume-mount=volume=sqlite-data,mount-path=/mnt/data
 
