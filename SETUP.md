@@ -57,7 +57,7 @@ as a volume at `/mnt/data` inside the backend container.
 ```bash
 gcloud storage buckets create gs://$PROJECT_ID-chat-db \
   --project=$PROJECT_ID \
-  --location=ASIA-SOUTHEAST1 \
+  --location=US-CENTRAL1 \
   --uniform-bucket-level-access
 ```
 

@@ -103,3 +103,4 @@ WebSocket events are handled by the Socket.IO gateway at the same host/port.
 | `ADMIN_USERNAME` | No | Username for the seeded admin account (default: `admin`) |
 | `ADMIN_PASSWORD` | No | Password for the seeded admin account (default: `admin123`) |
 | `RECAPTCHA_SECRET_KEY` | No | reCAPTCHA v2 secret key; leave blank to disable CAPTCHA verification |
+# Mon Jun  8 16:45:21 PST 2026
