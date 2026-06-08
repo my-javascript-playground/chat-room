@@ -9,7 +9,7 @@ on:
 
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  REGION: asia-southeast1
+  REGION: us-central1
   SERVICE: chat-room-backend
   IMAGE: asia-southeast1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/chat-room/chat-room-backend
 
