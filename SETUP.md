@@ -84,7 +84,9 @@ gcloud iam workload-identity-pools providers create-oidc $PROVIDER \
   --location=global \
   --workload-identity-pool=$POOL \
   --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-  --issuer-uri="https://token.actions.githubusercontent.com"
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-condition="assertion.repository == 'my-javascript-playground/chat-room'"
+
 
 # Service Account
 gcloud iam service-accounts create $SA \

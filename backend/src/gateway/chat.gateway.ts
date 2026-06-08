@@ -32,7 +32,8 @@ const rateLimits    = new Map<string, { timestamps: number[] }>();
 // When a socket disconnects we wait OFFLINE_GRACE_MS before declaring the user
 // offline.  If they reconnect within the window (e.g. page refresh) we cancel
 // the timer and never broadcast offline at all.
-const OFFLINE_GRACE_MS = 3_000;
+const OFFLINE_GRACE_MS       = 5_000;   // regular users
+const OFFLINE_GRACE_MS_ADMIN = 10_000;  // admins have more rooms/data to load on refresh
 const offlineTimers    = new Map<number, ReturnType<typeof setTimeout>>(); // userId → timer
 
 @WebSocketGateway({ cors: { origin: process.env.FRONTEND_URL ?? 'http://localhost:3000', credentials: true } })
@@ -274,6 +275,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (existing) clearTimeout(existing);
 
       const { userId, username } = client;
+      const user      = this.users.findById(userId);
+      const graceMs   = user?.role === 'admin' ? OFFLINE_GRACE_MS_ADMIN : OFFLINE_GRACE_MS;
       const timer = setTimeout(() => {
         offlineTimers.delete(userId);
         // Double-check they haven't reconnected during the grace period
@@ -282,8 +285,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           this._broadcastPresenceToSharedRooms(userId, username, 'offline');
           this._broadcastUserListToAllMemberRooms(userId);
         }
-      }, OFFLINE_GRACE_MS);
+      }, graceMs);
       offlineTimers.set(userId, timer);
+      console.log(`[~] offline grace timer set for ${username} (${graceMs}ms)`);
     }
   }
 

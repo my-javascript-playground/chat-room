@@ -75,11 +75,11 @@ jobs:
           flags: >-
             --allow-unauthenticated
             --min-instances=0
-            --max-instances=5
-            --memory=512Mi
+            --max-instances=1
+            --memory=256Mi
             --cpu=1
             --port=8080
-            --timeout=300s
+            --timeout=60s
             --concurrency=80
             --add-volume=name=sqlite-data,type=cloud-storage,bucket=${{ vars.GCP_PROJECT_ID }}-chat-db
             --add-volume-mount=volume=sqlite-data,mount-path=/mnt/data
