@@ -86,6 +86,19 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     if (!columns.includes('role')) {
       this.db.exec(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';`);
     }
+
+    // Fix existing installs: admin may exist and general room may exist,
+    // but admin was never added to room_members (the original bug).
+    const admin = this.findByUsername(DEFAULT_ADMIN_USERNAME);
+    const general = this.findRoomByName(DEFAULT_ROOM_NAME);
+    if (admin && general) {
+      const membership = this.getRoomMember(general.id, admin.id);
+      if (!membership) {
+        this.db.prepare(`INSERT INTO room_members (roomId, userId, status, createdAt) VALUES (?, ?, 'approved', ?)`)
+          .run(general.id, admin.id, Date.now());
+        console.log(`[db] Migration: added admin to general room`);
+      }
+    }
   }
 
   onModuleDestroy() {
@@ -109,6 +122,8 @@ export class UserService implements OnModuleInit, OnModuleDestroy {
     const admin = this.findByUsername(DEFAULT_ADMIN_USERNAME);
     if (!admin) return;
     this.db.prepare(`INSERT INTO rooms (name, createdBy, createdAt) VALUES (?, ?, ?)`).run(DEFAULT_ROOM_NAME, admin.id, Date.now());
+    // Add admin as an approved member of the general room they just created
+    this.addToGeneralRoom(admin.id);
     console.log(`[db] Default room "${DEFAULT_ROOM_NAME}" created`);
   }
 
