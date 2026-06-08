@@ -11,7 +11,7 @@ env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   REGION: asia-southeast1
   SERVICE: chat-room-frontend
-  IMAGE: gcr.io/${{ vars.GCP_PROJECT_ID }}/chat-room-frontend
+  IMAGE: asia-southeast1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/chat-room/chat-room-frontend
 
 jobs:
   deploy:
