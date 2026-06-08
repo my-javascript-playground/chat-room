@@ -1,0 +1,88 @@
+name: Deploy Backend to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: asia-southeast1
+  SERVICE: chat-room-backend
+  IMAGE: gcr.io/${{ vars.GCP_PROJECT_ID }}/chat-room-backend
+
+jobs:
+  deploy:
+    name: Build & Deploy Backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Keyless auth via Workload Identity Federation ─────────────────────
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── Build & push image ────────────────────────────────────────────────
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker --quiet
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag "$IMAGE:${{ github.sha }}" \
+            --tag "$IMAGE:latest" \
+            --file backend/Dockerfile \
+            backend/
+
+      - name: Push Docker image
+        run: |
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      # ── Deploy to Cloud Run ───────────────────────────────────────────────
+      # SQLite DB is stored on a GCS bucket mounted as a volume (Cloud Run
+      # volume mounts). The bucket must exist before first deploy — see SETUP.md.
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.IMAGE }}:${{ github.sha }}
+          env_vars: |
+            NODE_ENV=production
+            PORT=8080
+            DB_PATH=/mnt/data/chatroom.db
+            FRONTEND_URL=https://${{ secrets.DOMAIN_NAME }}
+          # Sensitive values come from GCP Secret Manager
+          secrets: |
+            JWT_SECRET=chat-room-jwt-secret:latest
+            ADMIN_PASSWORD=chat-room-admin-password:latest
+            RECAPTCHA_SECRET_KEY=chat-room-recaptcha-secret:latest
+          flags: >-
+            --allow-unauthenticated
+            --min-instances=0
+            --max-instances=5
+            --memory=512Mi
+            --cpu=1
+            --port=8080
+            --timeout=300s
+            --concurrency=80
+            --add-volume=name=sqlite-data,type=cloud-storage,bucket=${{ vars.GCP_PROJECT_ID }}-chat-db
+            --add-volume-mount=volume=sqlite-data,mount-path=/mnt/data
+
+      - name: Print deployed URL
+        run: echo "✅ Backend → ${{ steps.deploy.outputs.url }}"
