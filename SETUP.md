@@ -259,16 +259,38 @@ flags: >-
 ### Backend (api subdomain)
 1. Cloud Run console → `chat-room-backend` → Custom domains → Add mapping
 2. Enter `api.yourdomain.com` → Cloud Run gives you a CNAME value
-3. In Cloudflare DNS: add that CNAME record as **Proxied** (orange cloud)
+3. In Cloudflare DNS: add that CNAME record as **DNS only** (grey cloud) — do NOT enable proxy yet
+4. Wait for Google to provision the SSL certificate (5–15 min). Check status:
+   ```bash
+   gcloud beta run domain-mappings describe \
+     --domain=api.yourdomain.com \
+     --region=us-central1 \
+     --project=$PROJECT_ID
+   ```
+   Wait until `CertificateProvisioned: True` appears in the output.
+5. Once the certificate is provisioned, switch the Cloudflare record to **Proxied** (orange cloud)
 
 ### Frontend (apex / subdomain)
 1. Cloud Run console → `chat-room-frontend` → Custom domains → Add mapping
-2. Enter `yourdomain.com` → Cloud Run gives you A records
-3. In Cloudflare DNS: add those A records as **Proxied** (orange cloud)
+2. Enter `chat.yourdomain.com` → Cloud Run gives you CNAME records
+3. In Cloudflare DNS: add that CNAME record as **DNS only** (grey cloud) — do NOT enable proxy yet
+4. Wait for Google to provision the SSL certificate (5–15 min). Check status:
+   ```bash
+   gcloud beta run domain-mappings describe \
+     --domain=yourdomain.com \
+     --region=us-central1 \
+     --project=$PROJECT_ID
+   ```
+   Wait until `CertificateProvisioned: True` appears in the output.
+5. Once the certificate is provisioned, switch the Cloudflare records to **Proxied** (orange cloud)
 
 ### Cloudflare SSL
 - SSL/TLS mode → **Full (strict)**
 - Edge Certificates → **Always Use HTTPS**: ON
+
+> **Why DNS only first?** Cloudflare's proxy blocks Google's certificate validation (ACME challenge).
+> If you enable the proxy before the cert is provisioned, you'll get a 525 SSL handshake error.
+> Always let Google provision the cert with DNS only, then enable the proxy afterward.
 
 ### CORS
 Your backend `main.ts` already reads `FRONTEND_URL` from env — that's set in
