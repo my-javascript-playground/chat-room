@@ -169,6 +169,11 @@ Go to: your repo → Settings → Secrets and variables → Actions → New repo
 | `BACKEND_URL` | Cloud Run backend URL (fill after first backend deploy) |
 | `RECAPTCHA_SITE_KEY` | Your reCAPTCHA v2 site key (or leave empty) |
 
+
+| Variable | Value |
+|--------|-------|
+| `GCP_PROJECT_ID` | e.g. `project-number-xxxxxxx` |
+
 ---
 
 ## Step 8 — Files to add/update in your repo
