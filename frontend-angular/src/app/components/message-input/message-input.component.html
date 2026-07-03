@@ -1,0 +1,36 @@
+<div style="padding:1rem 1.5rem;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:0.5rem;background:var(--bg);position:relative">
+
+  @if (suggestions.length > 0) {
+    <div style="position:absolute;bottom:100%;left:1.5rem;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;z-index:100;min-width:180px;margin-bottom:4px;box-shadow:0 4px 16px rgba(0,0,0,0.3)">
+      @for (u of suggestions; track u; let i = $index) {
+        <button (click)="applySuggestion(u)"
+                [style.background]="i === suggestIdx ? 'rgba(0,229,160,0.125)' : 'transparent'"
+                [style.color]="i === suggestIdx ? 'var(--accent)' : 'var(--text)'"
+                style="display:block;width:100%;padding:0.4rem 0.75rem;border:none;font-family:var(--mono);font-size:0.82rem;cursor:pointer;text-align:left">
+          &#64;{{ u }}
+        </button>
+      }
+      <div style="padding:0.25rem 0.75rem;font-size:0.65rem;color:var(--muted);border-top:1px solid var(--border)">Tab / Enter to select</div>
+    </div>
+  }
+
+  <div style="display:flex;gap:0.75rem;align-items:flex-end">
+    <textarea #textarea
+              [(ngModel)]="draft"
+              (ngModelChange)="onDraftChange()"
+              (keydown)="handleKeyDown($event)"
+              [disabled]="!isOpen"
+              [placeholder]="isOpen ? 'Type a message… (@name to mention)' : 'Connecting…'"
+              rows="1"
+              style="flex:1;resize:none;min-height:44px;max-height:140px;padding:0.7rem 0.9rem;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:0.88rem;line-height:1.5;outline:none"
+              [style.opacity]="isOpen ? 1 : 0.4"
+              [style.cursor]="isOpen ? 'text' : 'not-allowed'"></textarea>
+    <button (click)="handleSend()"
+            [disabled]="!isOpen || !draft.trim()"
+            [style.opacity]="isOpen && draft.trim() ? 1 : 0.35"
+            [style.cursor]="isOpen && draft.trim() ? 'pointer' : 'not-allowed'"
+            style="height:44px;padding:0 1.25rem;background:var(--accent);color:#000;font-family:var(--display);font-weight:700;font-size:0.82rem;border:none;border-radius:6px;white-space:nowrap;flex-shrink:0;transition:opacity 0.2s">
+      Send
+    </button>
+  </div>
+</div>

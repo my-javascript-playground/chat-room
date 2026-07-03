@@ -1,0 +1,120 @@
+<div (click)="closeIfBackdrop($event)"
+     style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100">
+  <div style="width:min(560px,95vw);max-height:85vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.5rem;display:flex;flex-direction:column;gap:1.25rem">
+
+    <!-- Header -->
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="font-family:var(--display);font-weight:800;font-size:1.1rem;color:var(--accent)">Admin Panel</div>
+      <button (click)="closed.emit()" style="background:none;border:none;color:var(--text-dim);font-size:1.2rem;cursor:pointer">✕</button>
+    </div>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:0.5rem">
+      @for (t of tabOptions; track t.id) {
+        <button (click)="tab = t.id"
+                [style.background]="tab === t.id ? 'var(--accent)' : 'var(--bg)'"
+                [style.color]="tab === t.id ? '#000' : 'var(--text-dim)'"
+                [style.border]="'1px solid ' + (tab === t.id ? 'var(--accent)' : 'var(--border)')"
+                style="padding:0.4rem 0.9rem;font-family:var(--display);font-weight:700;font-size:0.75rem;border-radius:6px;cursor:pointer">
+          {{ t.label }}
+          @if (t.id === 'users' && pending.length > 0) { <span>({{ pending.length }} pending)</span> }
+          @if (t.id === 'joins' && joins.length > 0)   { <span>({{ joins.length }})</span> }
+        </button>
+      }
+    </div>
+
+    @if (error)   { <div style="color:#e55;font-size:0.8rem">{{ error }}</div> }
+    @if (loading) { <div style="color:var(--text-dim);font-size:0.82rem">Loading…</div> }
+
+    <!-- Users tab -->
+    @if (tab === 'users') {
+      <div style="display:flex;flex-direction:column;gap:1rem">
+        <div>
+          <div style="font-size:0.68rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:0.5rem">Pending — {{ pending.length }}</div>
+          @if (pending.length === 0) { <div style="color:var(--text-dim);font-size:0.8rem">No pending registrations</div> }
+          @for (u of pending; track u.id) {
+            <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;border-radius:6px;background:var(--bg);border:1px solid var(--border);margin-bottom:0.4rem;font-size:0.82rem">
+              <span style="flex:1;color:var(--text)">{{ u.username }}</span>
+              <span style="color:var(--text-dim);font-size:0.72rem">{{ fmtDate(u.createdAt) }}</span>
+              <button (click)="approveUser(u.id)" style="padding:0.25rem 0.6rem;font-size:0.72rem;font-weight:700;border-radius:4px;border:none;cursor:pointer;background:#2a9d5c;color:#fff;flex-shrink:0">Approve</button>
+              <button (click)="removeUser(u.id, u.username)" style="padding:0.25rem 0.6rem;font-size:0.72rem;font-weight:700;border-radius:4px;border:none;cursor:pointer;background:#c0392b;color:#fff;flex-shrink:0">Reject</button>
+            </div>
+          }
+        </div>
+        <div>
+          <div style="font-size:0.68rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:0.5rem">Approved — {{ approved.length }}</div>
+          @for (u of approved; track u.id) {
+            <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;border-radius:6px;background:var(--bg);border:1px solid var(--border);margin-bottom:0.4rem;font-size:0.82rem">
+              <span style="flex:1;color:var(--text)">
+                {{ u.username }}
+                @if (u.role === 'admin') { <span style="margin-left:0.4rem;font-size:0.65rem;background:var(--accent);color:#000;border-radius:3px;padding:1px 5px;font-weight:700">admin</span> }
+              </span>
+              <button (click)="openSetPassword(u)" style="padding:0.25rem 0.6rem;font-size:0.72rem;font-weight:700;border-radius:4px;border:none;cursor:pointer;background:#555;color:#fff;flex-shrink:0">Set password</button>
+              @if (u.role !== 'admin') {
+                <button (click)="removeUser(u.id, u.username)" style="padding:0.25rem 0.6rem;font-size:0.72rem;font-weight:700;border-radius:4px;border:none;cursor:pointer;background:#c0392b;color:#fff;flex-shrink:0">Remove</button>
+              }
+            </div>
+          }
+        </div>
+      </div>
+    }
+
+    <!-- Rooms tab -->
+    @if (tab === 'rooms') {
+      <div style="display:flex;flex-direction:column;gap:1rem">
+        <div style="display:flex;gap:0.5rem">
+          <input type="text" [(ngModel)]="newRoom" placeholder="New room name (letters, numbers, hyphens)"
+                 (keydown.enter)="createRoom()"
+                 style="flex:1;padding:0.55rem 0.8rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:0.85rem;outline:none" />
+          <button (click)="createRoom()" style="padding:0.25rem 0.6rem;font-size:0.72rem;font-weight:700;border-radius:4px;border:none;cursor:pointer;background:#2a9d5c;color:#fff">Create</button>
+        </div>
+        @for (r of rooms; track r.id) {
+          <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;border-radius:6px;background:var(--bg);border:1px solid var(--border);font-size:0.82rem">
+            <span style="flex:1;color:var(--text);font-family:var(--mono)"># {{ r.name }}</span>
+            <span style="color:var(--text-dim);font-size:0.72rem">{{ fmtDate(r.createdAt) }}</span>
+            @if (r.name !== 'general') {
+              <button (click)="deleteRoom(r.id, r.name)" style="padding:0.25rem 0.6rem;font-size:0.72rem;font-weight:700;border-radius:4px;border:none;cursor:pointer;background:#c0392b;color:#fff;flex-shrink:0">Delete</button>
+            } @else {
+              <span style="font-size:0.7rem;color:var(--text-dim);padding:0.2rem 0.5rem">default</span>
+            }
+          </div>
+        }
+      </div>
+    }
+
+    <!-- Join Requests tab -->
+    @if (tab === 'joins') {
+      <div>
+        @if (joins.length === 0) { <div style="color:var(--text-dim);font-size:0.8rem">No pending join requests</div> }
+        @for (j of joins; track j.roomId + '-' + j.userId) {
+          <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;border-radius:6px;background:var(--bg);border:1px solid var(--border);margin-bottom:0.4rem;font-size:0.82rem">
+            <span style="flex:1;color:var(--text)">{{ j.username }}</span>
+            <span style="color:var(--text-dim);font-size:0.72rem">→ #{{ j.roomName }}</span>
+            <button (click)="approveJoin(j.roomId, j.userId)" style="padding:0.25rem 0.6rem;font-size:0.72rem;font-weight:700;border-radius:4px;border:none;cursor:pointer;background:#2a9d5c;color:#fff;flex-shrink:0">Approve</button>
+            <button (click)="rejectJoin(j.roomId, j.userId)"  style="padding:0.25rem 0.6rem;font-size:0.72rem;font-weight:700;border-radius:4px;border:none;cursor:pointer;background:#c0392b;color:#fff;flex-shrink:0">Reject</button>
+          </div>
+        }
+      </div>
+    }
+
+  </div>
+
+  <!-- Set-password sub-modal -->
+  @if (pwTarget) {
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:200">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.5rem;width:min(360px,90vw);display:flex;flex-direction:column;gap:1rem">
+        <div style="font-weight:700;color:var(--text)">Set password for <span style="color:var(--accent)">{{ pwTarget.username }}</span></div>
+        <input type="password" [(ngModel)]="newPw" autofocus placeholder="New password (min. 6 chars)"
+               (keydown.enter)="submitPassword()"
+               style="padding:0.65rem 0.9rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:0.9rem;outline:none" />
+        @if (pwError) { <div style="color:#e55;font-size:0.78rem">{{ pwError }}</div> }
+        @if (pwInfo)  { <div style="color:var(--accent);font-size:0.78rem">{{ pwInfo }}</div> }
+        <div style="display:flex;gap:0.5rem">
+          <button (click)="submitPassword()" style="flex:1;padding:0.6rem;background:var(--accent);color:#000;font-weight:700;border:none;border-radius:4px;cursor:pointer;font-size:0.78rem">Update</button>
+          <button (click)="pwTarget = null"  style="flex:1;padding:0.6rem;background:var(--border);color:var(--text);font-weight:700;border:none;border-radius:4px;cursor:pointer;font-size:0.78rem">Cancel</button>
+        </div>
+      </div>
+    </div>
+  }
+
+</div>
