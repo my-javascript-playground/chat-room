@@ -66,7 +66,6 @@ jobs:
             NODE_ENV=production
             DB_PATH=/mnt/data/chatroom.db
             FRONTEND_URL=https://${{ secrets.DOMAIN_NAME }}
-            FRONTEND_ANGULAR_URL=https://${{ secrets.DOMAIN_NAME }}
           # Sensitive values come from GCP Secret Manager
           secrets: |
             JWT_SECRET=chat-room-jwt-secret:latest
