@@ -1,0 +1,63 @@
+<!-- Desktop: floating bottom-right panel -->
+<div class="dm-panel-desktop"
+     style="position:fixed;bottom:5rem;right:1.5rem;width:min(380px,92vw);height:460px;background:var(--surface);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,0.5);z-index:150">
+  <ng-container *ngTemplateOutlet="content"></ng-container>
+</div>
+
+<!-- Mobile: full-screen overlay -->
+<div class="dm-panel-mobile"
+     style="position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;z-index:250">
+  <ng-container *ngTemplateOutlet="content"></ng-container>
+</div>
+
+<ng-template #content>
+  <!-- Header -->
+  <div style="display:flex;align-items:center;padding:0.75rem 1rem;border-bottom:1px solid var(--border);gap:0.5rem;flex-shrink:0">
+    <div style="width:8px;height:8px;border-radius:50%;background:var(--accent);flex-shrink:0"></div>
+    <span style="font-family:var(--display);font-weight:700;font-size:0.9rem;flex:1;color:var(--text)">&#64;{{ partner }}</span>
+    <button (click)="closed.emit()" title="Hide conversation"
+            style="display:flex;align-items:center;gap:0.3rem;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);cursor:pointer;border-radius:5px;padding:0.2rem 0.55rem;font-size:0.72rem;font-family:var(--display);font-weight:700">
+      <span style="font-size:0.7rem">✕</span> Hide
+    </button>
+  </div>
+
+  <!-- Messages -->
+  <div style="flex:1;overflow-y:auto;padding:0.75rem 1rem;display:flex;flex-direction:column;gap:0.4rem">
+    @if (messages.length === 0) {
+      <div style="color:var(--text-dim);font-size:0.8rem;text-align:center;margin-top:2rem">
+        Start your conversation with &#64;{{ partner }}
+      </div>
+    }
+    @for (msg of messages; track msg.id) {
+      <div [style.align-items]="msg.from === currentUser ? 'flex-end' : 'flex-start'"
+           [style.align-self]="msg.from === currentUser ? 'flex-end' : 'flex-start'"
+           style="display:flex;flex-direction:column;max-width:85%">
+        <div [style.background]="msg.from === currentUser ? '#00e5a018' : 'var(--bg)'"
+             [style.border]="msg.from === currentUser ? '1px solid #00e5a035' : '1px solid var(--border)'"
+             [style.border-bottom-right-radius]="msg.from === currentUser ? '2px' : '6px'"
+             [style.border-bottom-left-radius]="msg.from === currentUser ? '6px' : '2px'"
+             style="padding:0.5rem 0.8rem;border-radius:6px;font-size:0.83rem;line-height:1.5;word-break:break-word;white-space:pre-wrap">
+          {{ msg.text }}
+        </div>
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:0.15rem;padding:0 0.3rem">
+          {{ formatTime(msg.timestamp) }}
+        </div>
+      </div>
+    }
+    <div #bottom></div>
+  </div>
+
+  <!-- Input -->
+  <div style="padding:0.6rem 0.75rem;border-top:1px solid var(--border);display:flex;gap:0.5rem;align-items:flex-end;flex-shrink:0">
+    <textarea [(ngModel)]="draft" (keydown)="handleKey($event)"
+              [placeholder]="'Message @' + partner + '…'"
+              rows="1"
+              style="flex:1;resize:none;min-height:36px;max-height:100px;padding:0.5rem 0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:0.82rem;outline:none;line-height:1.4"></textarea>
+    <button (click)="handleSend()" [disabled]="!draft.trim()"
+            [style.opacity]="draft.trim() ? 1 : 0.35"
+            [style.cursor]="draft.trim() ? 'pointer' : 'not-allowed'"
+            style="height:36px;padding:0 0.9rem;background:var(--accent);color:#000;font-family:var(--display);font-weight:700;font-size:0.78rem;border:none;border-radius:6px;flex-shrink:0">
+      Send
+    </button>
+  </div>
+</ng-template>

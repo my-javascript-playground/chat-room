@@ -1,0 +1,151 @@
+<!-- Desktop: always visible inline -->
+<div class="sidebar-desktop">
+  <ng-container *ngTemplateOutlet="sidebarTpl"></ng-container>
+</div>
+
+<!-- Mobile: slide-in drawer with backdrop -->
+@if (mobileOpen) {
+  <div style="position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.55);display:flex"
+       (click)="mobileClose.emit()">
+    <div (click)="$event.stopPropagation()" style="width:260px;height:100%;overflow-y:auto">
+      <ng-container *ngTemplateOutlet="sidebarTpl"></ng-container>
+    </div>
+  </div>
+}
+
+<ng-template #sidebarTpl>
+  <aside style="width:230px;flex-shrink:0;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);padding:1.25rem 0.9rem;gap:1.1rem;overflow-y:auto;height:100%">
+
+    <!-- Logo + close button (mobile) -->
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div style="font-family:var(--display);font-size:1.25rem;font-weight:800;color:var(--accent)">
+        chat<span style="color:var(--text-dim);font-weight:700">room</span>
+      </div>
+      <button (click)="mobileClose.emit()" class="mobile-only" aria-label="Close menu"
+              style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:1.1rem;line-height:1;padding:0.2rem">✕</button>
+    </div>
+
+    <!-- Connection -->
+    <div>
+      <div style="font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem">Connection</div>
+      <app-connection-badge [status]="status"></app-connection-badge>
+    </div>
+
+    <!-- My Status -->
+    <div style="position:relative" #presenceMenu>
+      <div style="font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem">My Status</div>
+      <button (click)="showPresenceMenu = !showPresenceMenu"
+              style="width:100%;padding:0.45rem 0.75rem;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text-dim);font-family:var(--display);font-weight:700;font-size:0.75rem;letter-spacing:0.05em;cursor:pointer;text-align:left;display:flex;align-items:center;gap:0.5rem">
+        <app-presence-dot [status]="presenceStatus" [size]="8"></app-presence-dot>
+        {{ presenceLabel(presenceStatus) }}
+        <span style="margin-left:auto;opacity:0.5;font-size:0.65rem">{{ showPresenceMenu ? '▴' : '▾' }}</span>
+      </button>
+      @if (showPresenceMenu) {
+        <div style="position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:100;overflow:hidden;margin-top:2px;box-shadow:0 4px 16px rgba(0,0,0,0.35)">
+          @for (opt of presenceOptions; track opt.value) {
+            <button (click)="selectPresence(opt.value)"
+                    [style.background]="presenceStatus === opt.value ? '#00e5a015' : 'transparent'"
+                    [style.color]="presenceStatus === opt.value ? 'var(--accent)' : 'var(--text)'"
+                    style="display:flex;align-items:center;gap:0.5rem;width:100%;padding:0.45rem 0.75rem;border:none;font-family:var(--display);font-size:0.78rem;cursor:pointer;text-align:left">
+              <app-presence-dot [status]="opt.value" [size]="7"></app-presence-dot>
+              {{ opt.label.slice(opt.label.indexOf(' ') + 1) }}
+            </button>
+          }
+        </div>
+      }
+    </div>
+
+    <!-- Rooms -->
+    <div>
+      <div style="font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem">Rooms</div>
+      <div style="display:flex;flex-direction:column;gap:0.2rem">
+        @for (r of rooms; track r.id) {
+          <div style="display:flex;align-items:center;gap:0.3rem">
+            <button (click)="doSwitchRoom(r.id)"
+                    [style.border]="currentRoom?.id === r.id ? '1px solid var(--accent)' : '1px solid transparent'"
+                    [style.background]="currentRoom?.id === r.id ? '#00e5a010' : 'transparent'"
+                    [style.color]="currentRoom?.id === r.id ? 'var(--accent)' : 'var(--text-dim)'"
+                    style="flex:1;display:flex;align-items:center;gap:0.4rem;padding:0.32rem 0.55rem;border-radius:6px;font-family:var(--mono);font-size:0.78rem;cursor:pointer;text-align:left">
+              <span style="opacity:0.5">#</span>
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.name }}</span>
+              @if (unreadCounts[r.id] > 0) {
+                <span style="background:var(--accent);color:#000;border-radius:999px;font-size:0.6rem;font-weight:800;padding:0 5px;min-width:16px;text-align:center;line-height:16px;height:16px">
+                  {{ unreadCounts[r.id] > 99 ? '99+' : unreadCounts[r.id] }}
+                </span>
+              }
+            </button>
+            @if (r.name.toLowerCase() !== 'general') {
+              <button title="Leave room" (click)="exitRoom.emit(r.id)"
+                      style="flex-shrink:0;width:24px;height:24px;border-radius:5px;border:1px solid #cc333355;background:#cc333322;color:#ff6666;cursor:pointer;font-size:0.72rem;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1">✕</button>
+            }
+          </div>
+        }
+      </div>
+    </div>
+
+    <!-- In Room -->
+    <div>
+      <div style="font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem">In Room — {{ users.length }}</div>
+      <div style="display:flex;flex-direction:column;gap:0.25rem">
+        @for (u of users; track u.username) {
+          <div (click)="canDm(u) ? doOpenDm(u.username) : null"
+               [style.color]="u.username === currentUser ? 'var(--accent)' : (canDm(u) ? 'var(--text)' : 'var(--text-dim)')"
+               [style.cursor]="canDm(u) ? 'pointer' : 'default'"
+               [style.opacity]="u.username === currentUser ? 1 : (canDm(u) ? 1 : 0.55)"
+               style="display:flex;align-items:center;gap:0.5rem;font-size:0.78rem;padding:0.25rem 0.4rem;border-radius:6px">
+            <app-presence-dot [status]="u.presenceStatus" [size]="7"></app-presence-dot>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis">{{ u.username }}{{ u.username === currentUser ? ' (you)' : '' }}</span>
+            @if (canDm(u)) { <span style="font-size:0.6rem;opacity:0.5">💬</span> }
+          </div>
+        }
+      </div>
+    </div>
+
+    <!-- Direct Messages -->
+    @if (dmConversations.length > 0) {
+      <div>
+        <div style="font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem">Direct Messages</div>
+        <div style="display:flex;flex-direction:column;gap:0.2rem">
+          @for (c of dmConversations; track c.partner) {
+            <div style="display:flex;align-items:center;gap:0.3rem">
+              <button (click)="doOpenDm(c.partner)"
+                      [style.border]="activeDm === c.partner ? '1px solid var(--accent)' : '1px solid transparent'"
+                      [style.background]="activeDm === c.partner ? '#00e5a010' : 'transparent'"
+                      [style.color]="activeDm === c.partner ? 'var(--accent)' : 'var(--text-dim)'"
+                      style="flex:1;display:flex;align-items:center;gap:0.4rem;padding:0.32rem 0.55rem;border-radius:6px;font-family:var(--mono);font-size:0.78rem;cursor:pointer;text-align:left">
+                <app-presence-dot [status]="getPartnerPresence(c.partner)" [size]="6"></app-presence-dot>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.partner }}</span>
+                @if (dmUnread[c.partner] > 0) {
+                  <span style="background:#ff9944;color:#000;border-radius:999px;font-size:0.6rem;font-weight:800;padding:0 5px;min-width:16px;text-align:center;line-height:16px;height:16px">
+                    {{ dmUnread[c.partner] > 99 ? '99+' : dmUnread[c.partner] }}
+                  </span>
+                }
+              </button>
+              <button title="Remove from DM list" (click)="$event.stopPropagation(); closeDmConvo.emit(c.partner)"
+                      style="flex-shrink:0;width:24px;height:24px;border-radius:5px;border:1px solid #cc333355;background:#cc333322;color:#ff6666;cursor:pointer;font-size:0.72rem;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1">✕</button>
+            </div>
+          }
+        </div>
+      </div>
+    }
+
+    <!-- Footer -->
+    <div style="display:flex;flex-direction:column;gap:0.4rem;margin-top:auto">
+      @if (isAdmin) {
+        <button (click)="doAdminPanel()"
+                style="width:100%;padding:0.45rem 0.75rem;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text-dim);font-family:var(--display);font-weight:700;font-size:0.75rem;letter-spacing:0.05em;cursor:pointer;text-align:left">
+          ⚙ Admin panel
+        </button>
+      }
+      <button (click)="doChangePassword()"
+              style="width:100%;padding:0.45rem 0.75rem;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text-dim);font-family:var(--display);font-weight:700;font-size:0.75rem;letter-spacing:0.05em;cursor:pointer;text-align:left">
+        🔑 Change password
+      </button>
+      <button (click)="logout.emit()"
+              style="width:100%;padding:0.45rem 0.75rem;border-radius:6px;border:1px solid #cc333355;background:var(--bg);color:#ff6666;font-family:var(--display);font-weight:700;font-size:0.75rem;letter-spacing:0.05em;cursor:pointer;text-align:left">
+        ⎋ Sign out
+      </button>
+    </div>
+
+  </aside>
+</ng-template>

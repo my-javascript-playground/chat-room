@@ -1,0 +1,78 @@
+<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100dvh;background:radial-gradient(ellipse 60% 40% at 50% 60%, #00e5a018 0%, transparent 70%), var(--bg)">
+  <div style="display:flex;flex-direction:column;gap:1.25rem;width:min(380px,90vw);padding:2.5rem;background:var(--surface);border:1px solid var(--border);border-radius:6px">
+
+    <div style="font-family:var(--display);font-size:2rem;font-weight:800;letter-spacing:-0.5px;color:var(--accent)">
+      chat<span style="color:var(--text-dim);font-weight:700">room</span>
+    </div>
+
+    <!-- Tab switcher -->
+    <div style="display:flex;gap:0.5rem">
+      <button (click)="switchMode('login')"
+              [style.background]="mode === 'login' ? 'var(--accent)' : 'var(--bg)'"
+              [style.color]="mode === 'login' ? '#000' : 'var(--text-dim)'"
+              [style.border]="'1px solid ' + (mode === 'login' ? 'var(--accent)' : 'var(--border)')"
+              style="flex:1;padding:0.5rem;border-radius:6px;font-family:var(--display);font-weight:700;font-size:0.8rem;letter-spacing:0.05em;cursor:pointer;text-transform:capitalize">
+        login
+      </button>
+      <button (click)="switchMode('register')"
+              [style.background]="mode === 'register' ? 'var(--accent)' : 'var(--bg)'"
+              [style.color]="mode === 'register' ? '#000' : 'var(--text-dim)'"
+              [style.border]="'1px solid ' + (mode === 'register' ? 'var(--accent)' : 'var(--border)')"
+              style="flex:1;padding:0.5rem;border-radius:6px;font-family:var(--display);font-weight:700;font-size:0.8rem;letter-spacing:0.05em;cursor:pointer;text-transform:capitalize">
+        register
+      </button>
+    </div>
+
+    @if (info) {
+      <div style="font-size:0.8rem;color:var(--accent);background:#00e5a010;border:1px solid var(--accent);border-radius:6px;padding:0.6rem 0.8rem">
+        {{ info }}
+      </div>
+    }
+
+    <div>
+      <div style="font-size:0.7rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:0.4rem">Username</div>
+      <input type="text" [(ngModel)]="username" [disabled]="loading"
+             autofocus autocomplete="username" maxlength="24" placeholder="e.g. alice"
+             (keydown.enter)="handleSubmit()"
+             style="width:100%;padding:0.75rem 1rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:0.95rem;outline:none;box-sizing:border-box" />
+    </div>
+
+    <div>
+      <div style="font-size:0.7rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:0.4rem">Password</div>
+      <input type="password" [(ngModel)]="password" [disabled]="loading"
+             [autocomplete]="mode === 'register' ? 'new-password' : 'current-password'"
+             placeholder="Min. 6 characters"
+             (keydown.enter)="handleSubmit()"
+             style="width:100%;padding:0.75rem 1rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:0.95rem;outline:none;box-sizing:border-box" />
+    </div>
+
+    @if (mode === 'register') {
+      <div>
+        <div style="font-size:0.7rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:0.4rem">Confirm Password</div>
+        <input type="password" [(ngModel)]="confirm" [disabled]="loading"
+               autocomplete="new-password" placeholder="Re-enter password"
+               (keydown.enter)="handleSubmit()"
+               style="width:100%;padding:0.75rem 1rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:0.95rem;outline:none;box-sizing:border-box" />
+      </div>
+    }
+
+    @if (recaptchaActive) {
+      <div style="display:flex;justify-content:center">
+        <div #captchaContainer></div>
+      </div>
+    }
+
+    @if (error) {
+      <div style="font-size:0.75rem;color:#e55;margin-top:-0.5rem">{{ error }}</div>
+    }
+
+    <button (click)="handleSubmit()" [disabled]="isSubmitDisabled"
+            [style.background]="isSubmitDisabled ? 'var(--border)' : 'var(--accent)'"
+            [style.color]="isSubmitDisabled ? 'var(--text-dim)' : '#000'"
+            [style.cursor]="isSubmitDisabled ? 'not-allowed' : 'pointer'"
+            style="padding:0.8rem;font-family:var(--display);font-weight:700;font-size:0.9rem;letter-spacing:0.05em;border:none;border-radius:6px;transition:background 0.2s,color 0.2s">
+      {{ loading ? 'Please wait…' : mode === 'register' ? 'Create account →' : 'Sign in →' }}
+    </button>
+
+  </div>
+</div>

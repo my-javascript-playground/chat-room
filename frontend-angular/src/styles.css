@@ -1,0 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg:       #0d0d0f;
+  --surface:  #141417;
+  --border:   #25252d;
+  --accent:   #00e5a0;
+  --accent2:  #ff5e5e;
+  --muted:    #4a4a5a;
+  --text:     #e8e8f0;
+  --text-dim: #7a7a92;
+  --mono:     'IBM Plex Mono', monospace;
+  --display:  'Syne', sans-serif;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+.grecaptcha-badge { visibility: hidden !important; }
+.show-recaptcha-badge .grecaptcha-badge { visibility: visible !important; }
+
+.sidebar-desktop { display: flex; height: 100%; }
+.mobile-only     { display: none !important; }
+
+@media (max-width: 640px) {
+  .sidebar-desktop { display: none !important; }
+  .mobile-only     { display: flex !important; }
+}
+
+.dm-panel-desktop { display: flex !important; flex-direction: column; }
+.dm-panel-mobile  { display: none  !important; }
+
+@media (max-width: 640px) {
+  .dm-panel-desktop { display: none  !important; }
+  .dm-panel-mobile  { display: flex  !important; flex-direction: column; }
+}

@@ -1,0 +1,121 @@
+<div style="display:flex;flex-direction:row;height:100dvh;overflow:hidden">
+
+  <app-sidebar
+    [status]="(status$ | async)!"
+    [users]="(users$ | async) ?? []"
+    [currentUser]="session.username"
+    [isAdmin]="session.role === 'admin'"
+    [rooms]="(rooms$ | async) ?? []"
+    [currentRoom]="(currentRoom$ | async) ?? null"
+    [unreadCounts]="(unreadCounts$ | async) ?? {}"
+    [presenceStatus]="(presenceStatus$ | async) ?? 'online'"
+    [dmConversations]="(dmConversations$ | async) ?? []"
+    [dmUnread]="(dmUnread$ | async) ?? {}"
+    [activeDm]="(activeDm$ | async) ?? null"
+    [globalPresence]="(globalPresence$ | async) ?? emptyPresenceMap"
+    [mobileOpen]="mobileSidebar"
+    (logout)="handleLogout()"
+    (adminPanel)="modal = 'admin'"
+    (changePassword)="modal = 'changePassword'"
+    (switchRoom)="handleSwitchRoom($event)"
+    (exitRoom)="exitRoom($event)"
+    (setPresence)="setPresence($event)"
+    (openDm)="openDm($event)"
+    (closeDmConvo)="closeDmConvo($event)"
+    (mobileClose)="mobileSidebar = false">
+  </app-sidebar>
+
+  <main style="flex:1;display:flex;flex-direction:column;min-width:0">
+
+    <!-- Header -->
+    <div style="padding:0.75rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:0.75rem;font-size:0.8rem;color:var(--text-dim)">
+      <div style="display:flex;align-items:center;gap:0.6rem;min-width:0">
+        <button class="mobile-only" (click)="mobileSidebar = true"
+                style="position:relative;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:0.35rem 0.55rem;cursor:pointer;color:var(--text-dim);font-size:1rem;line-height:1">
+          ☰
+          @if ((totalUnread$ | async)! > 0) {
+            <span style="position:absolute;top:-5px;right:-5px;background:#ff9944;color:#000;border-radius:999px;font-size:0.55rem;font-weight:800;padding:0 4px;min-width:14px;text-align:center;line-height:14px;height:14px">
+              {{ (totalUnread$ | async)! > 99 ? '99+' : (totalUnread$ | async) }}
+            </span>
+          }
+        </button>
+        <strong style="font-family:var(--display);font-size:1rem;color:var(--text);font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          {{ (currentRoom$ | async) ? '# ' + (currentRoom$ | async)!.name : '# …' }}
+        </strong>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:0.75rem;flex-shrink:0">
+        <span class="desktop-stat">{{ (users$ | async)?.length ?? 0 }} in room</span>
+        @if (joinableRooms.length > 0) {
+          <div #joinMenuRef style="position:relative">
+            <button (click)="showJoinMenu = !showJoinMenu"
+                    [style.background]="showJoinMenu ? 'var(--surface)' : 'transparent'"
+                    style="padding:0.25rem 0.6rem;border:1px solid var(--border);border-radius:6px;font-size:0.75rem;cursor:pointer;color:var(--text-dim);font-family:var(--display);white-space:nowrap">
+              + Join room
+            </button>
+            @if (showJoinMenu) {
+              <div style="position:absolute;right:0;top:110%;background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:50;min-width:180px;padding:0.5rem">
+                @for (r of joinableRooms; track r.id) {
+                  <button (click)="joinRoom(r)"
+                          style="display:block;width:100%;padding:0.4rem 0.6rem;background:none;border:none;color:var(--text);font-family:var(--mono);font-size:0.8rem;cursor:pointer;text-align:left;border-radius:4px">
+                    # {{ r.name }}
+                  </button>
+                }
+              </div>
+            }
+          </div>
+        }
+      </div>
+    </div>
+
+    <app-message-list
+      [messages]="(messages$ | async) ?? []"
+      [currentUser]="session.username">
+    </app-message-list>
+
+    <app-message-input
+      [status]="(status$ | async)!"
+      [users]="(users$ | async) ?? []">
+    </app-message-input>
+  </main>
+</div>
+
+<!-- DM panel -->
+@if ((activeDm$ | async); as activeDm) {
+  <app-direct-message-panel
+    [partner]="activeDm"
+    [currentUser]="session.username"
+    [messages]="getDmMessages(activeDm, (dmMessages$ | async) ?? {})"
+    (send)="onSendDm($event, activeDm)"
+    (closed)="closeDm()">
+  </app-direct-message-panel>
+}
+
+<!-- Mention toasts -->
+@if (((mentions$ | async) ?? []).length > 0) {
+  <div style="position:fixed;bottom:1.5rem;right:1rem;display:flex;flex-direction:column;gap:0.5rem;z-index:200;max-width:min(320px,calc(100vw - 2rem))">
+    @for (m of (mentions$ | async) ?? []; track m.id) {
+      <div style="background:var(--surface);border:1px solid #ff9944;border-radius:8px;padding:0.75rem 1rem;box-shadow:0 4px 20px rgba(0,0,0,0.4);font-size:0.82rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.35rem">
+          <span style="font-weight:700;color:#ff9944">&#64;mention in #{{ m.roomName }}</span>
+          <button (click)="clearMention(m.id)" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.8rem">✕</button>
+        </div>
+        <div style="color:var(--text-dim);margin-bottom:0.4rem">
+          <strong style="color:var(--text)">{{ m.username }}</strong>: {{ m.text.slice(0, 100) }}{{ m.text.length > 100 ? '…' : '' }}
+        </div>
+        <button (click)="handleSwitchRoom(m.roomId); clearMention(m.id)"
+                style="font-size:0.72rem;padding:0.2rem 0.6rem;border:1px solid #ff9944;border-radius:4px;background:none;color:#ff9944;cursor:pointer">
+          Go to room →
+        </button>
+      </div>
+    }
+  </div>
+}
+
+<!-- Modals -->
+@if (modal === 'admin') {
+  <app-admin-panel [token]="session.token" (closed)="modal = 'none'"></app-admin-panel>
+}
+@if (modal === 'changePassword') {
+  <app-change-password-modal [token]="session.token" (closed)="modal = 'none'"></app-change-password-modal>
+}
