@@ -1,0 +1,78 @@
+name: Deploy Frontend Angular to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend-angular/**"
+      - ".github/workflows/deploy-frontend-angular.yml"
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: us-central1
+  SERVICE: chat-room-frontend-angular
+  IMAGE: asia-southeast1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/chat-room/chat-room-frontend-angular
+
+jobs:
+  deploy:
+    name: Build & Deploy Frontend Angular
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Keyless auth ──────────────────────────────────────────────────────
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── Build & push image ────────────────────────────────────────────────
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker asia-southeast1-docker.pkg.dev --quiet
+
+      # BACKEND_URL and RECAPTCHA_SITE_KEY are baked into environment.prod.ts at
+      # build time via sed before ng build runs — they become part of the static bundle.
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag "$IMAGE:${{ github.sha }}" \
+            --tag "$IMAGE:latest" \
+            --file frontend-angular/Dockerfile \
+            --build-arg BACKEND_URL=${{ secrets.BACKEND_URL }} \
+            --build-arg RECAPTCHA_SITE_KEY=${{ secrets.RECAPTCHA_SITE_KEY }} \
+            frontend-angular/
+
+      - name: Push Docker image
+        run: |
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      # ── Deploy to Cloud Run ───────────────────────────────────────────────
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.IMAGE }}:${{ github.sha }}
+          flags: >-
+            --allow-unauthenticated
+            --min-instances=0
+            --max-instances=1
+            --memory=256Mi
+            --cpu=1
+            --port=80
+            --timeout=60s
+            --concurrency=80
+
+      - name: Print deployed URL
+        run: echo "✅ Frontend Angular → ${{ steps.deploy.outputs.url }}"

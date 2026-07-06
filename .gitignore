@@ -8,6 +8,9 @@ out/
 # NestJS
 dist/
 
+# Angular
+.angular
+
 # Environment
 .env
 .env.*

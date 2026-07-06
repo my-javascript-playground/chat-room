@@ -1,5 +1,5 @@
 export const environment = {
   production: false,
-  serverUrl: 'http://localhost:8081',
+  serverUrl: 'http://localhost:8080',
   recaptchaSiteKey: '',
 };
